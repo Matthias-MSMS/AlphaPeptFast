@@ -43,8 +43,10 @@ from .isotope_scoring import (
     MS1IsotopeScorer,
     calculate_isotope_distribution,
     calculate_isotope_mz_values,
+    detect_fragment_isotopes,
     find_isotope_envelope,
     score_isotope_envelope,
+    score_ms2_fragment_isotopes,
 )
 from .mass_recalibration import (
     MassRecalibrator,
@@ -72,6 +74,9 @@ __all__ = [
     "calculate_isotope_mz_values",
     "find_isotope_envelope",
     "score_isotope_envelope",
+    # MS2 fragment isotope detection
+    "detect_fragment_isotopes",
+    "score_ms2_fragment_isotopes",
     # Mass recalibration
     "MassRecalibrator",
     "estimate_mass_error_from_charge_states",

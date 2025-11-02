@@ -12,8 +12,10 @@ from alphapeptfast.scoring import (
     MS1IsotopeScorer,
     calculate_isotope_distribution,
     calculate_isotope_mz_values,
+    detect_fragment_isotopes,
     find_isotope_envelope,
     score_isotope_envelope,
+    score_ms2_fragment_isotopes,
 )
 from alphapeptfast.scoring.isotope_scoring import (
     normalize_intensities,
@@ -696,6 +698,222 @@ def test_full_workflow_poor_quality():
 
     # Lower combined score (but still decent due to good correlation of found peaks)
     assert result['combined_score'] < 0.85
+
+
+# =============================================================================
+# Tests for MS2 Fragment Isotope Detection
+# =============================================================================
+
+
+def test_detect_fragment_isotopes_basic():
+    """Test basic MS2 fragment isotope detection."""
+    # Create synthetic MS2 spectrum with fragment M+0 and M+1 peaks
+    # Fragment 1: y5 (600 Da, charge 1) at 601.5 m/z
+    # Fragment 2: y8 (900 Da, charge 1) at 901.8 m/z
+
+    # MUST BE SORTED for binary search!
+    spectrum_mz = np.array([
+        601.500,  # y5 M+0
+        602.503,  # y5 M+1 (601.5 + 1.003)
+        901.800,  # y8 M+0
+        902.803,  # y8 M+1 (901.8 + 1.003)
+    ], dtype=np.float64)
+
+    spectrum_intensity = np.array([
+        1000.0,  # y5 M+0
+        300.0,   # y5 M+1 (~30% for 600 Da fragment)
+        1500.0,  # y8 M+0
+        600.0,   # y8 M+1 (~40% for 900 Da fragment)
+    ], dtype=np.float32)
+
+    # Matched fragments (both y5 and y8 matched at M+0)
+    matched_indices = np.array([0, 2], dtype=np.int32)  # Indices of M+0 peaks
+    fragment_mz = np.array([601.500, 901.800], dtype=np.float64)
+    fragment_charge = np.array([1, 1], dtype=np.int32)
+    fragment_mass = np.array([600.0, 900.0], dtype=np.float64)
+
+    # Detect isotopes
+    n_iso, frac, ratios = detect_fragment_isotopes(
+        spectrum_mz, spectrum_intensity,
+        matched_indices, fragment_mz, fragment_charge, fragment_mass,
+        tolerance_ppm=10.0
+    )
+
+    # Should find both M+1 peaks
+    assert n_iso == 2
+    assert frac == pytest.approx(1.0, abs=1e-2)  # 2/2 fragments
+    assert len(ratios) == 2
+
+
+def test_detect_fragment_isotopes_high_res():
+    """Test MS2 isotope detection simulating high-res TOF (70% fraction)."""
+    # Simulate 10 matched fragments, 7 with detectable M+1
+    n_fragments = 10
+
+    # Create spectrum with M+0 and M+1 for 7 out of 10 fragments
+    spectrum_mz_list = []
+    spectrum_intensity_list = []
+    matched_indices_list = []
+    fragment_mz_list = []
+
+    for i in range(n_fragments):
+        base_mz = 500.0 + i * 100.0  # Spread fragments across m/z range
+        fragment_mass = base_mz - 1.0  # Approximate
+
+        # M+0 peak (always present)
+        spectrum_mz_list.append(base_mz)
+        spectrum_intensity_list.append(1000.0)
+        matched_indices_list.append(len(spectrum_mz_list) - 1)
+        fragment_mz_list.append(base_mz)
+
+        # M+1 peak (present for 70% of fragments)
+        if i < 7:  # First 7 fragments have M+1
+            m1_mz = base_mz + ISOTOPE_MASS_DIFFERENCE
+            spectrum_mz_list.append(m1_mz)
+            expected_ratio = fragment_mass * 0.5 / 12.0 * 0.011
+            spectrum_intensity_list.append(1000.0 * expected_ratio)
+
+    spectrum_mz = np.array(spectrum_mz_list, dtype=np.float64)
+    spectrum_intensity = np.array(spectrum_intensity_list, dtype=np.float32)
+    matched_indices = np.array(matched_indices_list, dtype=np.int32)
+    fragment_mz = np.array(fragment_mz_list, dtype=np.float64)
+    fragment_charge = np.ones(n_fragments, dtype=np.int32)
+    fragment_mass = fragment_mz - 1.0  # Approximate
+
+    # Detect isotopes
+    n_iso, frac, ratios = detect_fragment_isotopes(
+        spectrum_mz, spectrum_intensity,
+        matched_indices, fragment_mz, fragment_charge, fragment_mass,
+        tolerance_ppm=10.0
+    )
+
+    # Should find 7 out of 10 (70%)
+    assert n_iso == 7
+    assert frac == pytest.approx(0.7, abs=0.05)
+
+
+def test_detect_fragment_isotopes_low_res():
+    """Test MS2 isotope detection on low-res data (no isotopes)."""
+    # Simulate low-res MS2: only M+0 peaks, no isotopes visible
+    spectrum_mz = np.array([
+        601.500,  # Fragment 1 M+0
+        901.800,  # Fragment 2 M+0
+    ], dtype=np.float64)
+
+    spectrum_intensity = np.array([
+        1000.0,
+        1500.0,
+    ], dtype=np.float32)
+
+    matched_indices = np.array([0, 1], dtype=np.int32)
+    fragment_mz = np.array([601.500, 901.800], dtype=np.float64)
+    fragment_charge = np.array([1, 1], dtype=np.int32)
+    fragment_mass = np.array([600.0, 900.0], dtype=np.float64)
+
+    # Detect isotopes
+    n_iso, frac, ratios = detect_fragment_isotopes(
+        spectrum_mz, spectrum_intensity,
+        matched_indices, fragment_mz, fragment_charge, fragment_mass,
+        tolerance_ppm=10.0
+    )
+
+    # Should find 0 isotopes (low-res)
+    assert n_iso == 0
+    assert frac == 0.0
+    assert len(ratios) == 0
+
+
+def test_detect_fragment_isotopes_charge_2():
+    """Test MS2 isotope detection for doubly charged fragments."""
+    # Doubly charged fragment: M+1 spacing is ~0.502 m/z
+    # y10 fragment (1100 Da, charge 2) at 551.5 m/z
+
+    spectrum_mz = np.array([
+        551.500,  # M+0
+        552.002,  # M+1 (551.5 + 0.502)
+    ], dtype=np.float64)
+
+    spectrum_intensity = np.array([
+        1000.0,  # M+0
+        500.0,   # M+1 (~50% for 1100 Da fragment)
+    ], dtype=np.float32)
+
+    matched_indices = np.array([0], dtype=np.int32)
+    fragment_mz = np.array([551.500], dtype=np.float64)
+    fragment_charge = np.array([2], dtype=np.int32)  # Charge 2!
+    fragment_mass = np.array([1100.0], dtype=np.float64)
+
+    # Detect isotopes
+    n_iso, frac, ratios = detect_fragment_isotopes(
+        spectrum_mz, spectrum_intensity,
+        matched_indices, fragment_mz, fragment_charge, fragment_mass,
+        tolerance_ppm=10.0
+    )
+
+    # Should find M+1 for charge 2 fragment
+    assert n_iso == 1
+    assert frac == pytest.approx(1.0, abs=1e-2)
+
+
+def test_score_ms2_fragment_isotopes_high_res():
+    """Test scoring for high-res instrument (70% isotope fraction)."""
+    n_iso = 7
+    frac = 0.7
+    ratios = np.array([0.3, 0.4, 0.5, 0.35, 0.45, 0.38, 0.42], dtype=np.float64)
+
+    result = score_ms2_fragment_isotopes(n_iso, frac, ratios)
+
+    # High-res instrument
+    assert result['n_with_isotope'] == 7
+    assert result['isotope_fraction'] == pytest.approx(0.7, abs=1e-2)
+    assert result['isotope_score'] == pytest.approx(0.7, abs=1e-2)
+    assert result['recommended_weight'] == pytest.approx(0.15, abs=1e-3)  # High-res
+
+
+def test_score_ms2_fragment_isotopes_medium_res():
+    """Test scoring for medium-res instrument (35% isotope fraction)."""
+    n_iso = 3
+    frac = 0.35
+    ratios = np.array([0.3, 0.4, 0.35], dtype=np.float64)
+
+    result = score_ms2_fragment_isotopes(n_iso, frac, ratios)
+
+    # Medium-res instrument
+    assert result['isotope_fraction'] == pytest.approx(0.35, abs=1e-2)
+    assert result['recommended_weight'] == pytest.approx(0.05, abs=1e-3)  # Medium-res
+
+
+def test_score_ms2_fragment_isotopes_low_res():
+    """Test scoring for low-res instrument (no isotopes)."""
+    n_iso = 0
+    frac = 0.0
+    ratios = np.array([], dtype=np.float64)
+
+    result = score_ms2_fragment_isotopes(n_iso, frac, ratios)
+
+    # Low-res instrument
+    assert result['isotope_fraction'] == 0.0
+    assert result['recommended_weight'] == 0.0  # Skip scoring
+
+
+def test_detect_fragment_isotopes_empty():
+    """Test with no matched fragments."""
+    spectrum_mz = np.array([500.0, 600.0], dtype=np.float64)
+    spectrum_intensity = np.array([100.0, 200.0], dtype=np.float32)
+    matched_indices = np.array([], dtype=np.int32)
+    fragment_mz = np.array([], dtype=np.float64)
+    fragment_charge = np.array([], dtype=np.int32)
+    fragment_mass = np.array([], dtype=np.float64)
+
+    n_iso, frac, ratios = detect_fragment_isotopes(
+        spectrum_mz, spectrum_intensity,
+        matched_indices, fragment_mz, fragment_charge, fragment_mass,
+        tolerance_ppm=10.0
+    )
+
+    assert n_iso == 0
+    assert frac == 0.0
+    assert len(ratios) == 0
 
 
 if __name__ == "__main__":

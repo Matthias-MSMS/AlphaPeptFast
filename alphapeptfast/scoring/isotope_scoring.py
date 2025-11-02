@@ -45,6 +45,233 @@ from ..xic.extraction import binary_search_mz_range
 
 
 # =============================================================================
+# MS2 Fragment Isotope Detection (High-Resolution Instruments)
+# =============================================================================
+
+
+@njit
+def detect_fragment_isotopes(
+    spectrum_mz: np.ndarray,
+    spectrum_intensity: np.ndarray,
+    matched_fragment_indices: np.ndarray,
+    fragment_mz: np.ndarray,
+    fragment_charge: np.ndarray,
+    fragment_mass: np.ndarray,
+    tolerance_ppm: float = 10.0,
+) -> tuple[int, float, np.ndarray]:
+    """Detect M+1 isotopes for matched MS2 fragments.
+
+    This function exploits the fact that high-resolution MS2 (>1M resolution,
+    e.g., timsTOF, Bruker maXis) can resolve M+1 isotope peaks for fragments.
+    This provides powerful orthogonal evidence for correct fragment assignment.
+
+    Parameters
+    ----------
+    spectrum_mz : np.ndarray (float64)
+        MS2 spectrum m/z values (must be sorted!)
+    spectrum_intensity : np.ndarray (float32)
+        MS2 spectrum intensities
+    matched_fragment_indices : np.ndarray (int)
+        Indices in spectrum_mz where fragments were matched
+    fragment_mz : np.ndarray (float64)
+        Theoretical fragment m/z values (M+0)
+    fragment_charge : np.ndarray (int)
+        Fragment charge states
+    fragment_mass : np.ndarray (float64)
+        Fragment masses in Da (for expected ratio calculation)
+    tolerance_ppm : float
+        Mass tolerance for M+1 detection (default: 10.0 ppm)
+
+    Returns
+    -------
+    n_with_isotope : int
+        Number of fragments with detectable M+1 peak
+    isotope_fraction : float
+        Fraction of matched fragments showing isotopes (0-1)
+    isotope_ratios : np.ndarray (float64)
+        Observed M+1/M+0 intensity ratios for fragments with isotopes
+
+    Notes
+    -----
+    **Adaptive Behavior**:
+    - High-res TOF (>1M): Typically 50-70% of fragments show M+1
+    - Medium-res Orbitrap: 10-30% for large fragments (>800 Da)
+    - Low-res MS2: <10% (likely false positives, should be ignored)
+
+    **Expected Impact**:
+    - High-res TOF: 15-25% more PSMs at 1% FDR
+    - Orbitrap: 5-10% more PSMs
+    - Low-res: No impact (feature not applicable)
+
+    **TODO: VALIDATE ON REAL DATA**
+    This function has been implemented based on design but NOT YET TESTED
+    on real high-resolution MS2 data. Before using in production:
+
+    1. Test on timsTOF data (expect ~70% isotope fraction)
+    2. Test on Orbitrap data (expect ~20% for large fragments)
+    3. Test on low-res data (expect <10%, should gracefully skip)
+    4. Validate that intensity ratios match expected values
+    5. Measure actual FDR improvement on benchmark datasets
+
+    **TODO: LEARN OPTIMAL WEIGHT FROM DATA**
+    Current usage recommendation:
+    - If isotope_fraction > 0.5: weight = 0.15 (high confidence)
+    - If isotope_fraction > 0.3: weight = 0.05 (medium confidence)
+    - If isotope_fraction < 0.3: weight = 0.0 (skip, likely low-res)
+
+    These thresholds and weights should be learned from labeled data
+    using logistic regression or gradient boosting.
+
+    Examples
+    --------
+    >>> # After fragment matching
+    >>> n_iso, frac, ratios = detect_fragment_isotopes(
+    ...     ms2_mz, ms2_intensity,
+    ...     matched_indices, frag_mz, frag_charge, frag_mass
+    ... )
+    >>> if frac > 0.5:
+    ...     print(f"High-res instrument! {frac:.1%} fragments show isotopes")
+    ...     isotope_score = frac  # Use in PSM scoring
+    """
+    n_matched = len(matched_fragment_indices)
+    if n_matched == 0:
+        return 0, 0.0, np.zeros(0, dtype=np.float64)
+
+    isotope_confirmations = 0
+    isotope_ratios_list = []  # Will convert to array at end
+
+    for i in range(n_matched):
+        matched_idx = matched_fragment_indices[i]
+        frag_mz = fragment_mz[i]
+        frag_charge = fragment_charge[i]
+        frag_mass = fragment_mass[i]
+
+        # Calculate expected M+1 m/z
+        m1_mz = frag_mz + (ISOTOPE_MASS_DIFFERENCE / frag_charge)
+
+        # Binary search for M+1 peak
+        m1_start, m1_end = binary_search_mz_range(
+            spectrum_mz, m1_mz, tolerance_ppm
+        )
+
+        if m1_start == m1_end:
+            continue  # No M+1 found
+
+        # Find most intense peak in range (if multiple matches)
+        best_m1_intensity = 0.0
+        for idx in range(m1_start, m1_end):
+            if spectrum_intensity[idx] > best_m1_intensity:
+                best_m1_intensity = spectrum_intensity[idx]
+
+        # Get M+0 intensity
+        m0_intensity = spectrum_intensity[matched_idx]
+
+        if m0_intensity < 1e-6:
+            continue  # Avoid division by zero
+
+        # Calculate observed ratio
+        observed_ratio = best_m1_intensity / m0_intensity
+
+        # Calculate expected M+1 ratio from fragment mass
+        # For peptides: M+1 intensity ≈ mass * 0.011 (C13 contribution)
+        # Relative to M+0 (normalized to 1.0): ratio ≈ mass / 1000 * 0.5
+        avg_carbons = frag_mass * 0.5 / 12.0  # ~50% carbon by mass
+        expected_ratio = avg_carbons * 0.011  # C13 natural abundance
+
+        # Accept if within 2x of expected (generous tolerance)
+        # This accounts for:
+        # - Different amino acid compositions
+        # - Fragment type variations (b vs y)
+        # - Instrument sensitivity differences
+        if expected_ratio > 0:
+            ratio_deviation = observed_ratio / expected_ratio
+            if 0.5 <= ratio_deviation <= 2.0:
+                isotope_confirmations += 1
+                isotope_ratios_list.append(observed_ratio)
+
+    # Calculate isotope fraction
+    isotope_fraction = isotope_confirmations / n_matched if n_matched > 0 else 0.0
+
+    # Convert ratios list to array
+    isotope_ratios = np.array(isotope_ratios_list, dtype=np.float64)
+
+    return isotope_confirmations, isotope_fraction, isotope_ratios
+
+
+def score_ms2_fragment_isotopes(
+    n_with_isotope: int,
+    isotope_fraction: float,
+    isotope_ratios: np.ndarray,
+) -> dict[str, float]:
+    """Score MS2 fragment isotope evidence (adaptive to instrument resolution).
+
+    Parameters
+    ----------
+    n_with_isotope : int
+        Number of fragments with detected M+1 peaks
+    isotope_fraction : float
+        Fraction of matched fragments showing isotopes
+    isotope_ratios : np.ndarray
+        Observed M+1/M+0 intensity ratios
+
+    Returns
+    -------
+    dict
+        Scoring results:
+        - 'n_with_isotope': Number of fragments with isotopes
+        - 'isotope_fraction': Fraction showing isotopes
+        - 'mean_ratio': Mean M+1/M+0 ratio
+        - 'isotope_score': Final score (0-1)
+        - 'recommended_weight': Suggested weight in combined scoring
+
+    Notes
+    -----
+    **Adaptive Weight Recommendation**:
+    - isotope_fraction > 0.5: weight = 0.15 (high-res instrument)
+    - isotope_fraction > 0.3: weight = 0.05 (medium-res instrument)
+    - isotope_fraction < 0.3: weight = 0.0 (low-res, skip)
+
+    **TODO: REPLACE WITH LEARNED WEIGHTS**
+    These thresholds and weights are based on intuition. Should be replaced
+    with data-driven optimization once we have benchmark datasets.
+
+    Examples
+    --------
+    >>> n_iso, frac, ratios = detect_fragment_isotopes(...)
+    >>> result = score_ms2_fragment_isotopes(n_iso, frac, ratios)
+    >>> if result['recommended_weight'] > 0:
+    ...     combined_score += result['recommended_weight'] * result['isotope_score']
+    """
+    # Calculate mean ratio if we have isotopes
+    mean_ratio = 0.0
+    if len(isotope_ratios) > 0:
+        mean_ratio = float(np.mean(isotope_ratios))
+
+    # Simple scoring: isotope fraction itself is a good score
+    # (More sophisticated: could weight by ratio quality, fragment coverage, etc.)
+    isotope_score = isotope_fraction
+
+    # Adaptive weight recommendation based on isotope fraction
+    if isotope_fraction >= 0.5:
+        # High-resolution instrument (e.g., timsTOF)
+        recommended_weight = 0.15
+    elif isotope_fraction >= 0.3:
+        # Medium-resolution instrument (e.g., Orbitrap with large fragments)
+        recommended_weight = 0.05
+    else:
+        # Low-resolution or poor data quality
+        recommended_weight = 0.0
+
+    return {
+        'n_with_isotope': n_with_isotope,
+        'isotope_fraction': isotope_fraction,
+        'mean_ratio': mean_ratio,
+        'isotope_score': isotope_score,
+        'recommended_weight': recommended_weight,
+    }
+
+
+# =============================================================================
 # Theoretical Isotope Distribution Calculation
 # =============================================================================
 
