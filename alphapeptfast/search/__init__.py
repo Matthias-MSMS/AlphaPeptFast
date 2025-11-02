@@ -5,6 +5,7 @@ Core algorithms:
 2. Fragment matching with mass tolerance
 3. RT coelution filtering for feature-based search
 4. Ion mirroring for modification detection
+5. Candidate matching and feature extraction for RF scoring
 
 Battle-tested on:
 - ProteinFirst_MS1centric v1.0
@@ -21,10 +22,21 @@ from .fragment_matching import (
     calculate_match_statistics,
 )
 
+from .candidate_matching import (
+    match_candidates_batch,
+    extract_features,
+    MatchResults,
+)
+
 __all__ = [
+    # Fragment matching
     'binary_search_mz',
     'match_fragments_to_spectrum',
     'match_fragments_with_coelution',
     'calculate_complementary_mz',
     'calculate_match_statistics',
+    # Candidate matching and feature extraction
+    'match_candidates_batch',
+    'extract_features',
+    'MatchResults',
 ]
