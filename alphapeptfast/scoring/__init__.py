@@ -39,6 +39,13 @@ from .intensity_scoring import (
     AlphaPeptDeepLoader,
     IntensityScorer,
 )
+from .isotope_scoring import (
+    MS1IsotopeScorer,
+    calculate_isotope_distribution,
+    calculate_isotope_mz_values,
+    find_isotope_envelope,
+    score_isotope_envelope,
+)
 from .mass_recalibration import (
     MassRecalibrator,
     estimate_mass_error_from_charge_states,
@@ -59,6 +66,12 @@ __all__ = [
     # Intensity scoring
     "IntensityScorer",
     "AlphaPeptDeepLoader",
+    # MS1 isotope scoring
+    "MS1IsotopeScorer",
+    "calculate_isotope_distribution",
+    "calculate_isotope_mz_values",
+    "find_isotope_envelope",
+    "score_isotope_envelope",
     # Mass recalibration
     "MassRecalibrator",
     "estimate_mass_error_from_charge_states",
