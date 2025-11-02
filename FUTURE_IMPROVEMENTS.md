@@ -4,7 +4,148 @@ This document tracks design decisions and future improvements identified during 
 
 ## High Priority
 
-### 1. Learn Scoring Weights from Data
+### 1. MS2 Fragment Isotope Detection (High-Resolution Instruments)
+
+**Motivation**: High-resolution TOF instruments (>1M resolution) can resolve M+1 isotopes
+in MS2 fragments in ~70% of cases. This provides powerful orthogonal evidence for correct
+fragment assignments.
+
+**Current State**: Not implemented. We only use MS1 isotopes for precursor validation.
+
+**Why This Matters**:
+- Fragment isotopes validate charge state assignment
+- Confirms fragment identity (not noise or interference)
+- Instrument-specific advantage for high-res MS2
+- Underutilized in current proteomics tools
+
+**Implementation Design**:
+
+```python
+# In fragment_matching.py or new ms2_isotope_scoring.py
+
+def detect_fragment_isotopes(
+    spectrum_mz: np.ndarray,
+    spectrum_intensity: np.ndarray,
+    matched_fragment_mz: np.ndarray,
+    matched_fragment_charge: np.ndarray,
+    matched_fragment_mass: np.ndarray,
+    tolerance_ppm: float = 10.0,
+) -> dict:
+    """Detect M+1 isotopes for matched fragments.
+
+    Returns
+    -------
+    dict
+        - 'n_with_isotope': Number of fragments with detectable M+1
+        - 'isotope_fraction': Fraction of fragments showing isotopes
+        - 'isotope_ratios': Observed M+1/M+0 intensity ratios
+        - 'isotope_score': Combined score (0-1)
+    """
+    isotope_confirmations = 0
+    isotope_ratios = []
+
+    for i in range(len(matched_fragment_mz)):
+        fragment_mz = matched_fragment_mz[i]
+        fragment_charge = matched_fragment_charge[i]
+        fragment_mass = matched_fragment_mass[i]
+
+        # Calculate expected M+1 m/z
+        m1_mz = fragment_mz + (ISOTOPE_MASS_DIFFERENCE / fragment_charge)
+
+        # Binary search for M+1 peak
+        m1_start, m1_end = binary_search_mz_range(spectrum_mz, m1_mz, tolerance_ppm)
+
+        if m1_start == m1_end:
+            continue  # No M+1 found
+
+        # Find most intense peak in range (if multiple matches)
+        m1_idx = m1_start + np.argmax(spectrum_intensity[m1_start:m1_end])
+
+        # Check intensity ratio makes sense
+        m0_intensity = spectrum_intensity[matched_indices[i]]
+        m1_intensity = spectrum_intensity[m1_idx]
+
+        # Expected M+1 ratio from fragment mass (~mass/1000 * 0.5 for peptides)
+        expected_ratio = calculate_expected_m1_ratio(fragment_mass)
+        observed_ratio = m1_intensity / m0_intensity
+
+        # Accept if within 2x of expected (generous tolerance)
+        if 0.5 * expected_ratio < observed_ratio < 2.0 * expected_ratio:
+            isotope_confirmations += 1
+            isotope_ratios.append(observed_ratio)
+
+    isotope_fraction = isotope_confirmations / len(matched_fragment_mz)
+
+    # Score only if enough evidence (adaptive threshold)
+    if isotope_fraction > 0.3:  # At least 30% of fragments
+        isotope_score = isotope_fraction  # Could be more sophisticated
+    else:
+        isotope_score = 0.0  # Not enough evidence (low-res instrument?)
+
+    return {
+        'n_with_isotope': isotope_confirmations,
+        'isotope_fraction': isotope_fraction,
+        'isotope_ratios': np.array(isotope_ratios),
+        'isotope_score': isotope_score,
+    }
+```
+
+**Adaptive Behavior**:
+- **High-res instruments**: 50-70% of fragments show M+1 → strong evidence
+- **Medium-res instruments**: 10-30% of fragments → weak evidence, low weight
+- **Low-res instruments**: <10% of fragments → ignore (likely false positives)
+
+**Integration into PSM Scoring**:
+```python
+# In combined PSM scoring
+ms2_isotope_result = detect_fragment_isotopes(...)
+
+if ms2_isotope_result['isotope_fraction'] > 0.3:
+    # Add MS2 isotope evidence to combined score
+    # Weight should be learned from data (see improvement #2)
+    combined_score = (
+        0.35 * fragment_intensity_score +
+        0.25 * ms1_isotope_score +
+        0.15 * ms2_isotope_score +  # NEW!
+        0.15 * mass_accuracy_score +
+        0.10 * rt_score
+    )
+```
+
+**Expected Impact**:
+- **High-res TOF**: 15-25% more PSMs at 1% FDR
+- **Orbitrap**: 5-10% more PSMs (only large fragments)
+- **Low-res**: No impact (feature not applicable)
+
+**Implementation Complexity**: Medium
+- Reuse binary search from MS1 isotope scoring
+- Need expected M+1 ratio calculation (similar to MS1)
+- Adaptive threshold logic
+- Integration into PSM scoring
+
+**Testing Requirements**:
+- Test with high-res TOF data (timsTOF, Bruker maXis)
+- Test with Orbitrap (should see partial isotopes)
+- Test with low-res (should gracefully skip)
+- Validate that ratios make physical sense
+
+**References**:
+- Proteome Discoverer uses fragment isotopes on high-res instruments
+- MSFragger has experimental support for this
+- Underutilized in most DIA tools
+
+**Priority**: HIGH - This is a significant differentiator for high-res instruments
+and relatively straightforward to implement given existing infrastructure.
+
+**Timeline**:
+- Phase 2B: Implement detection logic
+- Phase 2C: Test on real high-res data
+- Phase 2D: Integrate into combined scoring
+- Phase 3A: Learn optimal weights
+
+---
+
+### 2. Learn Scoring Weights from Data
 
 **Current State**: All scoring weights are hardcoded based on intuition.
 
