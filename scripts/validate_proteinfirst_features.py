@@ -24,9 +24,34 @@ import pickle
 import csv
 from typing import Dict, List
 import argparse
+from dataclasses import dataclass
 
 from alphapeptfast.fragments.generator import generate_by_ions, encode_peptide_to_ord
 from alphapeptfast.search.candidate_matching import match_candidates_batch, extract_features
+
+
+# Stub classes for unpickling ProteinFirst data (from features.finder module)
+@dataclass
+class FeatureSet:
+    """Container for feature finding results (stub for unpickling)."""
+    mz: np.ndarray
+    rt: np.ndarray
+    mz_std: np.ndarray
+    fwhm: np.ndarray
+    intensity: np.ndarray
+    quality: np.ndarray
+    n_peaks: np.ndarray
+    n_scans: np.ndarray
+    rt_start: np.ndarray = None
+    rt_stop: np.ndarray = None
+    charge: np.ndarray = None
+    charge_source: np.ndarray = None
+
+
+# Register stub class for unpickling
+import sys
+sys.modules['features'] = sys.modules[__name__]
+sys.modules['features.finder'] = sys.modules[__name__]
 
 
 def load_training_sample(n_samples: int = 100) -> List[Dict]:
@@ -51,16 +76,21 @@ def load_training_sample(n_samples: int = 100) -> List[Dict]:
 
 def load_window_features(window: int):
     """Load MS2 features for a specific window."""
-    features_path = Path.home() / f"LocalData/mass_spec_data/ProteinFirst_MS1centric/data/ms2_features_core_anneal/features_{window}_core_anneal.pkl"
+    # Use ms2_features_production directory which has windows 381-696+
+    features_path = Path.home() / f"LocalData/mass_spec_data/ProteinFirst_MS1centric/data/ms2_features_production/features_{window}_core_anneal.pkl"
 
     if not features_path.exists():
         print(f"Warning: Window {window} features not found at {features_path}")
         return None
 
     with open(features_path, 'rb') as f:
-        window_features = pickle.load(f)
+        window_data = pickle.load(f)
 
-    return window_features
+    # Extract the core_features FeatureSet from the dict
+    if isinstance(window_data, dict) and 'core_features' in window_data:
+        return window_data['core_features']
+
+    return window_data
 
 
 def compare_features(our_features: Dict[str, float], pf_row: Dict) -> Dict[str, tuple]:
@@ -127,7 +157,7 @@ def validate_single_psm(row: Dict, window_features) -> Dict:
         return None
 
     peptide = row['peptide']
-    charge = int(row['precursor_charge'])
+    charge = int(float(row['precursor_charge']))  # Convert '2.0' -> 2.0 -> 2
     precursor_rt = float(row['precursor_rt'])
     precursor_intensity = float(row['precursor_intensity']) if 'precursor_intensity' in row else 1e6
 
