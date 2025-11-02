@@ -25,6 +25,7 @@ from .fragment_matching import (
 from .candidate_matching import (
     match_candidates_batch,
     extract_features,
+    extract_features_extended,
     MatchResults,
 )
 
@@ -38,5 +39,6 @@ __all__ = [
     # Candidate matching and feature extraction
     'match_candidates_batch',
     'extract_features',
+    'extract_features_extended',
     'MatchResults',
 ]

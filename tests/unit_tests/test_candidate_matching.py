@@ -491,3 +491,138 @@ class TestMatchResultsNamedTuple:
         # Can wrap in MatchResults
         results = MatchResults(*raw_results)
         assert results.match_counts[0] == 1
+
+
+class TestExtendedFeatureExtraction:
+    """Test extract_features_extended with advanced scoring."""
+
+    def test_extended_features_without_scorers(self):
+        """Test that extended features default to 0 without scorers."""
+        from alphapeptfast.search.candidate_matching import extract_features_extended
+
+        features = extract_features_extended(
+            peptide='PEPTIDE',
+            charge=2,
+            precursor_intensity=1e6,
+            precursor_mz=650.5,
+            precursor_mass=1299.0,
+            match_count=5,
+            match_intensities=np.ones(5, dtype=np.float32) * 1000,
+            match_mz_errors=np.zeros(5, dtype=np.float32),
+            match_rt_diffs=np.ones(5, dtype=np.float32),
+            match_types=np.zeros(5, dtype=np.uint8),
+            match_positions=np.arange(1, 6, dtype=np.uint8),
+            match_charges=np.ones(5, dtype=np.uint8),
+            n_theoretical_fragments=10,
+        )
+
+        # Should have all 37 features
+        assert 'fragment_intensity_correlation' in features
+        assert 'ms1_isotope_score' in features
+        assert 'ms2_isotope_fraction' in features
+        assert 'ms2_isotope_recommended_weight' in features
+
+        # New features should default to 0
+        assert features['fragment_intensity_correlation'] == 0.0
+        assert features['ms1_isotope_score'] == 0.0
+        assert features['ms2_isotope_fraction'] == 0.0
+        assert features['ms2_isotope_recommended_weight'] == 0.0
+
+        # Baseline features should still be calculated
+        assert features['match_count'] == 5.0
+        assert features['coverage'] == 0.5
+        assert features['precursor_intensity'] == 1e6
+
+    def test_extended_features_backward_compatible(self):
+        """Test that basic features match extract_features()."""
+        from alphapeptfast.search.candidate_matching import extract_features_extended, extract_features
+
+        # Run both functions
+        basic_features = extract_features(
+            peptide='PEPTIDE',
+            charge=2,
+            precursor_intensity=1e6,
+            match_count=5,
+            match_intensities=np.ones(5, dtype=np.float32) * 1000,
+            match_mz_errors=np.zeros(5, dtype=np.float32),
+            match_rt_diffs=np.ones(5, dtype=np.float32),
+            match_types=np.zeros(5, dtype=np.uint8),
+            match_positions=np.arange(1, 6, dtype=np.uint8),
+            match_charges=np.ones(5, dtype=np.uint8),
+            n_theoretical_fragments=10,
+        )
+
+        extended_features = extract_features_extended(
+            peptide='PEPTIDE',
+            charge=2,
+            precursor_intensity=1e6,
+            precursor_mz=650.5,
+            precursor_mass=1299.0,
+            match_count=5,
+            match_intensities=np.ones(5, dtype=np.float32) * 1000,
+            match_mz_errors=np.zeros(5, dtype=np.float32),
+            match_rt_diffs=np.ones(5, dtype=np.float32),
+            match_types=np.zeros(5, dtype=np.uint8),
+            match_positions=np.arange(1, 6, dtype=np.uint8),
+            match_charges=np.ones(5, dtype=np.uint8),
+            n_theoretical_fragments=10,
+        )
+
+        # All baseline features should match
+        for key in basic_features:
+            if key != 'matched_fragments_string':  # Skip string comparison
+                assert basic_features[key] == extended_features[key], f"Mismatch for {key}"
+
+    def test_extended_features_count(self):
+        """Test that we get exactly 37 features."""
+        from alphapeptfast.search.candidate_matching import extract_features_extended
+
+        features = extract_features_extended(
+            peptide='PEPTIDE',
+            charge=2,
+            precursor_intensity=1e6,
+            precursor_mz=650.5,
+            precursor_mass=1299.0,
+            match_count=5,
+            match_intensities=np.ones(5, dtype=np.float32),
+            match_mz_errors=np.zeros(5, dtype=np.float32),
+            match_rt_diffs=np.ones(5, dtype=np.float32),
+            match_types=np.zeros(5, dtype=np.uint8),
+            match_positions=np.arange(1, 6, dtype=np.uint8),
+            match_charges=np.ones(5, dtype=np.uint8),
+            n_theoretical_fragments=10,
+        )
+
+        # Count: 30 baseline (12 fragment + 5 RT + 10 ion + 2 precursor + 1 string)
+        # + 4 new advanced features = 34 total
+        assert len(features) == 34, f"Expected 34 features, got {len(features)}"
+
+        # Check all expected keys are present
+        expected_keys = [
+            # Fragment matching (12)
+            'match_count', 'coverage', 'total_intensity', 'mean_intensity',
+            'max_intensity', 'median_intensity', 'intensity_std',
+            'mean_abs_ppm_error', 'ppm_error_std', 'max_abs_ppm_error',
+            'intensity_snr', 'match_efficiency',
+            # RT (5)
+            'mean_rt_diff', 'std_rt_diff', 'max_rt_diff', 'min_rt_diff', 'median_rt_diff',
+            # Ion series (10)
+            'n_b_ions', 'n_y_ions', 'y_to_b_ratio',
+            'b_series_continuity', 'y_series_continuity', 'max_continuity',
+            'n_high_mass_ions', 'n_low_mass_ions', 'n_mid_mass_ions',
+            'mean_fragment_spacing',
+            # Precursor (2)
+            'precursor_intensity', 'precursor_charge',
+            # String (1)
+            'matched_fragments_string',
+            # NEW advanced features (4)
+            'fragment_intensity_correlation',
+            'ms1_isotope_score',
+            'ms2_isotope_fraction',
+            'ms2_isotope_recommended_weight',
+        ]
+
+        # Should be exactly 34 features
+        assert len(expected_keys) == 34
+        for key in expected_keys:
+            assert key in features, f"Missing feature: {key}"

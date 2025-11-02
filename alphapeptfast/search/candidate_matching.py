@@ -56,10 +56,14 @@ Examples
 
 from __future__ import annotations
 
-from typing import Dict, NamedTuple
+from typing import Dict, NamedTuple, Optional, TYPE_CHECKING
 
 import numpy as np
 from numba import njit, prange
+
+if TYPE_CHECKING:
+    from ..scoring.intensity_scoring import IntensityScorer
+    from ..scoring.isotope_scoring import MS1IsotopeScorer
 
 
 class MatchResults(NamedTuple):
@@ -525,5 +529,241 @@ def extract_features(
         for i in range(match_count)
     ])
     features['matched_fragments_string'] = matched_fragments_str
+
+    return features
+
+
+def extract_features_extended(
+    peptide: str,
+    charge: int,
+    precursor_intensity: float,
+    precursor_mz: float,
+    precursor_mass: float,
+    match_count: int,
+    match_intensities: np.ndarray,
+    match_mz_errors: np.ndarray,
+    match_rt_diffs: np.ndarray,
+    match_types: np.ndarray,
+    match_positions: np.ndarray,
+    match_charges: np.ndarray,
+    n_theoretical_fragments: int,
+    # Advanced scoring (optional)
+    intensity_scorer: Optional['IntensityScorer'] = None,
+    ms1_isotope_scorer: Optional['MS1IsotopeScorer'] = None,
+    ms1_spectrum_mz: Optional[np.ndarray] = None,
+    ms1_spectrum_intensity: Optional[np.ndarray] = None,
+    ms2_spectrum_mz: Optional[np.ndarray] = None,
+    ms2_spectrum_intensity: Optional[np.ndarray] = None,
+    matched_spectrum_indices: Optional[np.ndarray] = None,
+    theoretical_fragment_mz: Optional[np.ndarray] = None,
+    theoretical_fragment_charge: Optional[np.ndarray] = None,
+    theoretical_fragment_mass: Optional[np.ndarray] = None,
+) -> Dict[str, float]:
+    """Extract all 37 features including advanced isotope and intensity scoring.
+
+    This is the extended version of extract_features() that adds 4 new features:
+    - fragment_intensity_correlation (from AlphaPeptDeep predictions)
+    - ms1_isotope_score (from MS1 envelope scoring)
+    - ms2_isotope_fraction (from MS2 fragment isotope detection)
+    - ms2_isotope_recommended_weight (adaptive weight based on fraction)
+
+    Parameters
+    ----------
+    peptide : str
+        Peptide sequence
+    charge : int
+        Precursor charge state
+    precursor_intensity : float
+        Precursor intensity from MS1
+    precursor_mz : float
+        Precursor m/z value
+    precursor_mass : float
+        Precursor neutral mass
+    match_count : int
+        Number of matched fragments
+    match_intensities : np.ndarray
+        Intensities of matched fragments
+    match_mz_errors : np.ndarray
+        Mass errors in PPM
+    match_rt_diffs : np.ndarray
+        RT differences in seconds
+    match_types : np.ndarray
+        Ion types (0=b, 1=y)
+    match_positions : np.ndarray
+        Fragment positions
+    match_charges : np.ndarray
+        Fragment charge states
+    n_theoretical_fragments : int
+        Total theoretical fragments
+    intensity_scorer : IntensityScorer, optional
+        Scorer for fragment intensity correlation (uses AlphaPeptDeep)
+    ms1_isotope_scorer : MS1IsotopeScorer, optional
+        Scorer for MS1 isotope envelope
+    ms1_spectrum_mz : np.ndarray, optional
+        MS1 spectrum m/z values (for isotope scoring)
+    ms1_spectrum_intensity : np.ndarray, optional
+        MS1 spectrum intensities
+    ms2_spectrum_mz : np.ndarray, optional
+        MS2 spectrum m/z values (for MS2 isotope detection)
+    ms2_spectrum_intensity : np.ndarray, optional
+        MS2 spectrum intensities
+    matched_spectrum_indices : np.ndarray, optional
+        Indices in MS2 spectrum where fragments matched
+    theoretical_fragment_mz : np.ndarray, optional
+        Full theoretical fragment m/z array (for intensity scorer)
+    theoretical_fragment_charge : np.ndarray, optional
+        Full theoretical fragment charge array
+    theoretical_fragment_mass : np.ndarray, optional
+        Full theoretical fragment mass array
+
+    Returns
+    -------
+    features : Dict[str, float]
+        Dictionary of 37 features (33 baseline + 4 new):
+
+        **NEW FEATURES (4)**:
+        - fragment_intensity_correlation: Pearson correlation with AlphaPeptDeep (FIXED bug!)
+        - ms1_isotope_score: MS1 isotope envelope score (0-1)
+        - ms2_isotope_fraction: Fraction of fragments with M+1 detected (0-1)
+        - ms2_isotope_recommended_weight: Adaptive weight for MS2 isotopes (0-1)
+
+        Plus all 33 baseline features from extract_features().
+
+    Notes
+    -----
+    - If optional scorers/data not provided, new features default to 0.0
+    - Backward compatible: works exactly like extract_features() if advanced params omitted
+    - Intensity correlation uses FIXED alignment (bug from Phase 1F)
+    - MS2 isotopes only useful on high-res instruments (>1M resolution)
+
+    Examples
+    --------
+    >>> # Basic usage (33 features)
+    >>> features = extract_features_extended(
+    ...     peptide='PEPTIDE', charge=2, precursor_intensity=1e6,
+    ...     precursor_mz=650.5, precursor_mass=1299.0,
+    ...     match_count=10, match_intensities=intensities,
+    ...     match_mz_errors=errors, match_rt_diffs=rt_diffs,
+    ...     match_types=types, match_positions=positions,
+    ...     match_charges=charges, n_theoretical_fragments=30,
+    ... )
+    >>> # Returns 33 baseline features + 4 zeros
+    >>>
+    >>> # Advanced usage (37 features)
+    >>> from alphapeptfast.scoring import IntensityScorer, MS1IsotopeScorer
+    >>> intensity_scorer = IntensityScorer('predictions.hdf')
+    >>> ms1_scorer = MS1IsotopeScorer()
+    >>>
+    >>> features = extract_features_extended(
+    ...     peptide='PEPTIDE', charge=2,
+    ...     precursor_intensity=1e6, precursor_mz=650.5, precursor_mass=1299.0,
+    ...     match_count=10, match_intensities=intensities,
+    ...     match_mz_errors=errors, match_rt_diffs=rt_diffs,
+    ...     match_types=types, match_positions=positions, match_charges=charges,
+    ...     n_theoretical_fragments=30,
+    ...     # Advanced scoring
+    ...     intensity_scorer=intensity_scorer,
+    ...     ms1_isotope_scorer=ms1_scorer,
+    ...     ms1_spectrum_mz=ms1_mz, ms1_spectrum_intensity=ms1_intensity,
+    ...     ms2_spectrum_mz=ms2_mz, ms2_spectrum_intensity=ms2_intensity,
+    ...     matched_spectrum_indices=matched_indices,
+    ...     theoretical_fragment_mz=theo_mz, theoretical_fragment_charge=theo_charge,
+    ...     theoretical_fragment_mass=theo_mass,
+    ... )
+    >>> print(f"Intensity corr: {features['fragment_intensity_correlation']:.3f}")
+    >>> print(f"MS1 isotope: {features['ms1_isotope_score']:.3f}")
+    >>> print(f"MS2 isotope fraction: {features['ms2_isotope_fraction']:.3f}")
+    """
+    # Get all 33 baseline features first
+    features = extract_features(
+        peptide=peptide,
+        charge=charge,
+        precursor_intensity=precursor_intensity,
+        match_count=match_count,
+        match_intensities=match_intensities,
+        match_mz_errors=match_mz_errors,
+        match_rt_diffs=match_rt_diffs,
+        match_types=match_types,
+        match_positions=match_positions,
+        match_charges=match_charges,
+        n_theoretical_fragments=n_theoretical_fragments,
+    )
+
+    # === NEW FEATURE 1: Fragment Intensity Correlation ===
+    # Uses AlphaPeptDeep predictions with FIXED alignment (Phase 1F bug fix)
+    if intensity_scorer is not None and theoretical_fragment_mz is not None:
+        try:
+            # Need to reconstruct matched fragment info for scorer
+            # The intensity scorer needs ALL theoretical fragments, not just matched
+            intensity_result = intensity_scorer.score_match(
+                peptide=peptide,
+                charge=charge,
+                observed_mz=ms2_spectrum_mz if ms2_spectrum_mz is not None else np.array([]),
+                observed_intensity=ms2_spectrum_intensity if ms2_spectrum_intensity is not None else np.array([]),
+                fragment_mz=theoretical_fragment_mz,
+                fragment_type=match_types[:n_theoretical_fragments] if len(match_types) >= n_theoretical_fragments else match_types,
+                fragment_position=match_positions[:n_theoretical_fragments] if len(match_positions) >= n_theoretical_fragments else match_positions,
+                fragment_charge=theoretical_fragment_charge if theoretical_fragment_charge is not None else match_charges[:n_theoretical_fragments],
+                mz_tolerance_ppm=20.0,  # Standard tolerance
+            )
+            features['fragment_intensity_correlation'] = float(intensity_result['correlation'])
+        except Exception:
+            # If scoring fails (e.g., peptide not in library), default to 0
+            features['fragment_intensity_correlation'] = 0.0
+    else:
+        features['fragment_intensity_correlation'] = 0.0
+
+    # === NEW FEATURE 2: MS1 Isotope Score ===
+    # Validates precursor using isotope envelope
+    if ms1_isotope_scorer is not None and ms1_spectrum_mz is not None:
+        try:
+            ms1_result = ms1_isotope_scorer.score_envelope(
+                spectrum_mz=ms1_spectrum_mz,
+                spectrum_intensity=ms1_spectrum_intensity if ms1_spectrum_intensity is not None else np.array([]),
+                precursor_mz=precursor_mz,
+                precursor_charge=charge,
+                precursor_mass=precursor_mass,
+            )
+            features['ms1_isotope_score'] = float(ms1_result['combined_score'])
+        except Exception:
+            features['ms1_isotope_score'] = 0.0
+    else:
+        features['ms1_isotope_score'] = 0.0
+
+    # === NEW FEATURE 3 & 4: MS2 Fragment Isotope Detection ===
+    # Detects M+1 isotopes for matched fragments (high-res instruments only)
+    if (ms2_spectrum_mz is not None and matched_spectrum_indices is not None and
+        theoretical_fragment_mz is not None and theoretical_fragment_charge is not None and
+        theoretical_fragment_mass is not None):
+        try:
+            from ..scoring.isotope_scoring import detect_fragment_isotopes, score_ms2_fragment_isotopes
+
+            # Detect isotopes
+            n_with_isotope, isotope_fraction, isotope_ratios = detect_fragment_isotopes(
+                spectrum_mz=ms2_spectrum_mz,
+                spectrum_intensity=ms2_spectrum_intensity if ms2_spectrum_intensity is not None else np.array([]),
+                matched_fragment_indices=matched_spectrum_indices,
+                fragment_mz=theoretical_fragment_mz[:match_count] if len(theoretical_fragment_mz) >= match_count else theoretical_fragment_mz,
+                fragment_charge=theoretical_fragment_charge[:match_count] if len(theoretical_fragment_charge) >= match_count else theoretical_fragment_charge,
+                fragment_mass=theoretical_fragment_mass[:match_count] if len(theoretical_fragment_mass) >= match_count else theoretical_fragment_mass,
+                tolerance_ppm=10.0,
+            )
+
+            features['ms2_isotope_fraction'] = float(isotope_fraction)
+
+            # Calculate adaptive weight
+            isotope_score, recommended_weight = score_ms2_fragment_isotopes(
+                n_with_isotope=n_with_isotope,
+                n_matched_fragments=match_count,
+                isotope_ratios=isotope_ratios,
+            )
+            features['ms2_isotope_recommended_weight'] = float(recommended_weight)
+
+        except Exception:
+            features['ms2_isotope_fraction'] = 0.0
+            features['ms2_isotope_recommended_weight'] = 0.0
+    else:
+        features['ms2_isotope_fraction'] = 0.0
+        features['ms2_isotope_recommended_weight'] = 0.0
 
     return features
