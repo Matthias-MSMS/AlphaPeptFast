@@ -1,7 +1,7 @@
 # AlphaPeptFast Consolidation - Session Status
 
 **Date**: 2025-11-02
-**Status**: Phase 1D COMPLETED - FDR Calculation Ported
+**Status**: Phase 1E COMPLETED - Mass Recalibration Ported
 
 ---
 
@@ -209,6 +209,81 @@
 
 ---
 
+## ✅ COMPLETED: Phase 1E - Mass Recalibration with Adaptive RT Binning
+
+### What We Built
+**alphapeptfast/scoring/mass_recalibration.py** (660 lines) - RT-segmented mass recalibration
+- `MassRecalibrator` - Main class with adaptive binning
+- `estimate_mass_error_from_charge_states()` - Pre-search charge state consistency check
+- `calculate_ppm_errors()` - PPM calculation (Numba-accelerated)
+- `remove_outliers_mad()` - MAD-based outlier removal
+- `determine_rt_bins()` - Adaptive binning based on PSM count
+- `assign_rt_bins()` - RT bin assignment (Numba)
+- `calculate_bin_corrections()` - Median correction per bin (Numba)
+- `interpolate_bin_corrections()` - Linear interpolation for sparse bins (Numba)
+- `apply_corrections_fast()` - Fast m/z correction (Numba)
+
+**test_mass_recalibration.py** (760+ lines, 38 tests)
+- PPM calculation (3 tests)
+- MAD-based outlier removal (3 tests)
+- Adaptive RT binning (4 tests)
+- RT bin assignment (3 tests)
+- Bin correction calculation (3 tests)
+- Linear interpolation (4 tests)
+- MassRecalibrator class (4 tests)
+- **CRITICAL: Charge-state independence test** (2 tests)
+- Rapid mass drift handling (1 test - air conditioning case)
+- Charge state consistency check (2 tests)
+- Recommended tolerance calculation (2 tests)
+- Edge cases (3 tests)
+- Performance benchmarks (2 tests)
+- Integration workflows (2 tests)
+
+### Test Results
+```
+============================== 317 passed in 25.19s ==============================
+```
+
+**Total**: 279 (Phase 1D) + 38 (Phase 1E) = **317 tests passing**
+
+### Key Achievements
+- ✅ Pure NumPy/Numba implementation (no pandas or scipy!)
+- ✅ Adaptive RT binning: 5-100 bins based on PSM count
+- ✅ Charge-state independent: single curve works for all charges (CRITICAL TEST)
+- ✅ Rapid mass drift detection: catches shifts within minutes (air conditioning case)
+- ✅ Pre-search charge state consistency check
+- ✅ MAD-based outlier removal (consistent with RT calibration)
+- ✅ Linear interpolation for sparse bins
+- ✅ Recommended tolerance calculation (95th percentile)
+- ✅ All 38 tests passing in <6 seconds
+- ✅ Correction speed: >1M m/z values/second
+
+### Performance Benchmarks
+- **Calibration fitting**: 10k PSMs in ~100 ms (>100k PSMs/sec)
+- **Correction application**: 1M m/z in ~700 ms (>1.4M m/z/sec)
+- **Binary search**: >50k searches/sec
+
+### Technical Highlights
+- **Adaptive binning**: More PSMs → more bins → captures rapid drift
+  - 500 PSMs → 5 bins
+  - 10k PSMs → 40 bins (resolves 1.5-min shifts in 60-min gradient)
+  - 100k PSMs → 100 bins (resolves 36-sec shifts)
+- **Charge-state independence verified**: Single calibration curve eliminates systematic errors for ALL charge states (2+, 3+, 4+)
+- **Iterative workflow**:
+  1. Wide tolerance search → calibrate → recommended tolerance
+  2. Narrow tolerance search → refine calibration
+- **Graceful degradation**: Falls back to global median if insufficient data
+- **No external dependencies**: Pure NumPy/Numba (no scipy, no pandas)
+
+### Design Decisions
+- ✅ **RT-based bins** (not scan-based): More generalizable across instruments
+- ✅ **Single calibration curve** for all charge states (user requirement)
+- ✅ **Linear interpolation** (not splines): Simpler, sufficient for RT-segmented corrections
+- ✅ **MAD outlier removal** (not sigma): Robust to heavy-tailed distributions
+- ✅ **95th percentile tolerance** (not mean+2σ): Better captures actual error distribution
+
+---
+
 ## 🎯 NEXT: Phase 2 or Continue Phase 1 Enhancements
 
 ### Plan Approved
@@ -276,38 +351,38 @@ Target: 60-80 new tests, all passing
 
 | Metric | Value |
 |--------|-------|
-| Code lines | ~5,960 (mass calc + 6 modules) |
-| Test lines | ~4,687 (mass calc + 4 test phases) |
-| Total tests | **279** (92 + 95 + 28 + 33 + 31) |
+| Code lines | ~6,620 (mass calc + 7 modules) |
+| Test lines | ~5,447 (mass calc + 5 test phases) |
+| Total tests | **317** (92 + 95 + 28 + 33 + 31 + 38) |
 | Test pass rate | **100%** |
-| Test execution time | 23.66s |
+| Test execution time | 25.19s |
 | Documentation | 520 lines |
-| Code coverage | 35% overall |
+| Code coverage | 40% overall |
 
 ---
 
 ## 🚀 Options for Next Phase
 
 **Option 1**: Continue Phase 1 enhancements
-- **Mass recalibration** (high value, LOW effort - ~300 lines + 20-25 tests)
-  - ⚠️ CRITICAL: Include 2+ vs 3+ charge state test (see MASS_RECALIBRATION_TODO.md)
-- Fragment intensity scoring
-- Additional validation modules
-- Target: 20-25 more tests per module
+- **Fragment intensity scoring** - Assign scores based on fragment intensity patterns
+- **MS1 isotope scoring** - Score precursor isotope envelope quality
+- **Additional validation modules** - E.g., spectral library matching
+- Target: 20-30 tests per module
 
 **Option 2**: Move to Phase 2 - Complete DIA search pipeline
 - Integrate all modules into end-to-end workflow
 - Real-world testing with actual DIA data
 - Performance optimization
 - Window-based search implementation
+- Multi-threading and parallel processing
 
 **Option 3**: Code consolidation and cleanup
 - Refactor overlapping functionality
 - Improve documentation
 - Optimize performance bottlenecks
-- Add integration tests
+- Add integration tests spanning multiple modules
 
 ---
 
-**Status**: Phase 1 substantially complete with 6 core modules ported and fully tested
-**Next recommended**: Mass recalibration (completes core scoring pipeline)
+**Status**: Phase 1 substantially complete with 7 core modules ported and fully tested
+**Next recommended**: Move to Phase 2 (end-to-end DIA pipeline) or continue with fragment intensity scoring
