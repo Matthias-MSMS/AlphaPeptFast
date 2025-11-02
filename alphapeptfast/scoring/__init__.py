@@ -35,6 +35,10 @@ from .fdr import (
     calculate_fdr,
     calculate_fdr_statistics,
 )
+from .intensity_scoring import (
+    AlphaPeptDeepLoader,
+    IntensityScorer,
+)
 from .mass_recalibration import (
     MassRecalibrator,
     estimate_mass_error_from_charge_states,
@@ -52,6 +56,9 @@ __all__ = [
     "calculate_fdr",
     "add_decoy_peptides",
     "calculate_fdr_statistics",
+    # Intensity scoring
+    "IntensityScorer",
+    "AlphaPeptDeepLoader",
     # Mass recalibration
     "MassRecalibrator",
     "estimate_mass_error_from_charge_states",
