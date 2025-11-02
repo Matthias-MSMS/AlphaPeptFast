@@ -1,7 +1,7 @@
 # AlphaPeptFast Consolidation - Session Status
 
 **Date**: 2025-11-02
-**Status**: Phase 1A COMPLETED - All Core Modules Tested
+**Status**: Phase 1C COMPLETED - Peak Grouping Module Ported
 
 ---
 
@@ -118,6 +118,48 @@
 
 ---
 
+## ✅ COMPLETED: Phase 1C - Peak Grouping with Cosine Similarity
+
+### What We Built
+**alphapeptfast/scoring/peak_grouping.py** (480 lines) - Cosine similarity-based peak grouping
+- `cosine_similarity()` - RT profile comparison (>3.7M comparisons/sec)
+- `extract_rt_profiles_around_peak()` - Extract RT profiles around peaks
+- `find_coeluting_peaks()` - Identify co-eluting fragments
+- `group_coeluting_peaks()` - Complete grouping workflow
+- `build_composite_spectrum()` - Combine grouped peaks
+
+**test_peak_grouping.py** (650+ lines, 33 tests)
+- Cosine similarity calculation (8 tests)
+- RT profile extraction (6 tests)
+- Co-eluting peak detection (6 tests)
+- Peak grouping workflow (6 tests)
+- Composite spectrum building (5 tests)
+- Performance benchmarks (3 tests)
+- Integration workflow (1 test)
+
+### Test Results
+```
+============================== 248 passed in 22.61s ==============================
+```
+
+**Total**: 215 (Phase 1B) + 33 (Phase 1C) = **248 tests passing**
+
+### Key Achievements
+- ✅ Ported peak grouping module from AlphaMod
+- ✅ Pure NumPy/Numba implementation (no pandas dependency)
+- ✅ Cosine similarity: >3.7M comparisons/sec
+- ✅ RT profile extraction: >70k extractions/sec
+- ✅ Composite spectrum: >2.4k builds/sec
+- ✅ Fixed float32 precision issues (11 ppm grouping tolerance)
+- ✅ All 33 new tests passing in <6 seconds
+
+### Technical Highlights
+- **Float32 tolerance handling**: Used 11 ppm internal grouping tolerance to handle float32 precision at boundary conditions
+- **"Over-include" philosophy**: Generous similarity thresholds avoid missing true fragment groups
+- **Complementary to XIC extraction**: Builds naturally on Phase 1B's XIC work
+
+---
+
 ## 🎯 NEXT: Phase 2 or Continue Phase 1 Enhancements
 
 ### Plan Approved
@@ -185,21 +227,33 @@ Target: 60-80 new tests, all passing
 
 | Metric | Value |
 |--------|-------|
-| Code lines | ~5,050 (mass calc + 4 modules) |
-| Test lines | ~3,487 (mass calc + Phase 1A + Phase 1B) |
-| Total tests | **215** (92 + 95 + 28) |
+| Code lines | ~5,530 (mass calc + 5 modules) |
+| Test lines | ~4,137 (mass calc + Phase 1A + Phase 1B + Phase 1C) |
+| Total tests | **248** (92 + 95 + 28 + 33) |
 | Test pass rate | **100%** |
-| Test execution time | 9.11s |
+| Test execution time | 22.61s |
 | Documentation | 520 lines |
+| Code coverage | 31% overall |
 
 ---
 
-## 🚀 After Phase 1A
+## 🚀 Options for Next Phase
 
-**Phase 1B**: Port XIC extraction from AlphaMod (~400 lines + 30-40 tests)
-**Phase 1C**: Optional batch encoding optimization (defer if not needed)
+**Option 1**: Continue Phase 1 enhancements
+- Port FDR calculation (pure NumPy/Numba, no pandas)
+- Port additional scoring/validation modules
+- Target: 60-80 more tests
+
+**Option 2**: Move to Phase 2 - Complete DIA search pipeline
+- Integrate all modules into end-to-end workflow
+- Real-world testing with actual DIA data
+- Performance optimization
+
+**Option 3**: Code consolidation and cleanup
+- Refactor overlapping functionality
+- Improve documentation
+- Optimize performance bottlenecks
 
 ---
 
-**Ready to resume**: Start creating RT calibration tests
-**First file to create**: `tests/unit_tests/test_rt_calibration.py`
+**Status**: Phase 1 substantially complete with 5 core modules ported and fully tested
