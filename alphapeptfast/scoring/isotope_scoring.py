@@ -362,10 +362,26 @@ def score_isotope_envelope(
 
     Notes
     -----
-    Combined score formula:
+    Combined score formula (HARDCODED WEIGHTS):
     - 30% peak coverage (more peaks = more confident)
     - 30% mass accuracy (exp(-|error|/5))
     - 40% intensity correlation (how well pattern matches)
+
+    TODO: LEARN WEIGHTS FROM DATA
+    These weights are currently hardcoded based on intuition. They should be
+    learned from labeled data (correct vs incorrect PSMs) using:
+    - Logistic regression on FDR-controlled PSMs
+    - Gradient boosting (XGBoost/LightGBM)
+    - Or simple grid search optimizing separation at 1% FDR
+
+    The optimal weights likely depend on:
+    - Instrument type (Orbitrap vs Q-TOF)
+    - Sample complexity (plasma vs cell lysate)
+    - Precursor m/z range (low vs high mass)
+    - Charge state distribution
+
+    For now, these weights provide reasonable discrimination, but can be
+    significantly improved with data-driven optimization.
 
     Good isotope envelopes typically score > 0.6
     """
