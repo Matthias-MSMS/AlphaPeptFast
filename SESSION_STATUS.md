@@ -1,7 +1,7 @@
 # AlphaPeptFast Consolidation - Session Status
 
 **Date**: 2025-11-02
-**Status**: Phase 1C COMPLETED - Peak Grouping Module Ported
+**Status**: Phase 1D COMPLETED - FDR Calculation Ported
 
 ---
 
@@ -160,6 +160,55 @@
 
 ---
 
+## ✅ COMPLETED: Phase 1D - FDR Calculation (Pure NumPy/Numba)
+
+### What We Built
+**alphapeptfast/scoring/fdr.py** (430 lines) - Target-decoy FDR calculation
+- `calculate_fdr()` - Main FDR calculation with picked competition support
+- `_calculate_fdr_core()` - Core FDR math (Numba-accelerated)
+- `_estimate_pi0()` - Storey's pi0 estimation
+- `_apply_picked_competition()` - Picked FDR (best per group)
+- `add_decoy_peptides()` - Reverse/shuffle decoy generation
+- `calculate_fdr_statistics()` - Global FDR statistics
+
+**test_fdr.py** (550+ lines, 31 tests)
+- Basic FDR calculation (7 tests)
+- Q-value monotonicity (2 tests)
+- Picked competition (3 tests)
+- Storey's pi0 estimation (2 tests)
+- Decoy generation (5 tests)
+- FDR statistics (2 tests)
+- Edge cases (5 tests)
+- Statistical correctness (2 tests)
+- Performance benchmarks (2 tests)
+- Integration workflows (2 tests)
+
+### Test Results
+```
+============================== 279 passed in 23.66s ==============================
+```
+
+**Total**: 248 (Phase 1C) + 31 (Phase 1D) = **279 tests passing**
+
+### Key Achievements
+- ✅ Pure NumPy/Numba implementation (no pandas dependency!)
+- ✅ FDR calculation: >187k PSMs/second
+- ✅ Picked competition: >88k PSMs/second
+- ✅ Target-decoy approach with q-value calculation
+- ✅ Storey's pi0 estimation (optional, less conservative)
+- ✅ Reverse and shuffle decoy generation
+- ✅ Monotonic q-values guaranteed
+- ✅ All 31 tests passing in <11 seconds
+
+### Technical Highlights
+- **No pandas**: Entire FDR pipeline uses only NumPy arrays - faster and more maintainable
+- **Numba acceleration**: Core FDR calculation JIT-compiled for maximum speed
+- **Picked competition**: Proper handling of grouped PSMs (e.g., best per precursor)
+- **Statistical rigor**: Q-values ensure monotonicity, pi0 estimation reduces conservativeness
+- **Decoy validation**: Skips duplicates, preserves terminal amino acids for enzyme specificity
+
+---
+
 ## 🎯 NEXT: Phase 2 or Continue Phase 1 Enhancements
 
 ### Plan Approved
@@ -227,33 +276,38 @@ Target: 60-80 new tests, all passing
 
 | Metric | Value |
 |--------|-------|
-| Code lines | ~5,530 (mass calc + 5 modules) |
-| Test lines | ~4,137 (mass calc + Phase 1A + Phase 1B + Phase 1C) |
-| Total tests | **248** (92 + 95 + 28 + 33) |
+| Code lines | ~5,960 (mass calc + 6 modules) |
+| Test lines | ~4,687 (mass calc + 4 test phases) |
+| Total tests | **279** (92 + 95 + 28 + 33 + 31) |
 | Test pass rate | **100%** |
-| Test execution time | 22.61s |
+| Test execution time | 23.66s |
 | Documentation | 520 lines |
-| Code coverage | 31% overall |
+| Code coverage | 35% overall |
 
 ---
 
 ## 🚀 Options for Next Phase
 
 **Option 1**: Continue Phase 1 enhancements
-- Port FDR calculation (pure NumPy/Numba, no pandas)
-- Port additional scoring/validation modules
-- Target: 60-80 more tests
+- **Mass recalibration** (high value, LOW effort - ~300 lines + 20-25 tests)
+  - ⚠️ CRITICAL: Include 2+ vs 3+ charge state test (see MASS_RECALIBRATION_TODO.md)
+- Fragment intensity scoring
+- Additional validation modules
+- Target: 20-25 more tests per module
 
 **Option 2**: Move to Phase 2 - Complete DIA search pipeline
 - Integrate all modules into end-to-end workflow
 - Real-world testing with actual DIA data
 - Performance optimization
+- Window-based search implementation
 
 **Option 3**: Code consolidation and cleanup
 - Refactor overlapping functionality
 - Improve documentation
 - Optimize performance bottlenecks
+- Add integration tests
 
 ---
 
-**Status**: Phase 1 substantially complete with 5 core modules ported and fully tested
+**Status**: Phase 1 substantially complete with 6 core modules ported and fully tested
+**Next recommended**: Mass recalibration (completes core scoring pipeline)
