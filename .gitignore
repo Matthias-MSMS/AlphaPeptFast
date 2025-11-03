@@ -85,3 +85,20 @@ dmypy.json
 # Claude Code exported conversations
 [0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]-*.md
 *.pkl
+
+# Investigation artifacts (move to ProteinFirst)
+*.tsv
+*.log
+*BUGGY*
+*_FIXED.tsv
+BUG_*.md
+STATUS_*.md
+TODO_*.md
+scripts/analyze_*.py
+scripts/check_*.py
+scripts/test_*.py
+scripts/compare_*.py
+scripts/validate_*.py
+scripts/augment_single_window.py
+scripts/quick_validate_fix.py
+scripts/train_rf_with_new_features.py
