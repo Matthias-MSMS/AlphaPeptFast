@@ -155,8 +155,9 @@ class PeptideDatabase:
 
         print(f"Building flat ord() storage for {self.n_peptides:,} peptides...")
 
-        # Convert all peptides to ord() arrays
-        peptides_ord_list = [encode_peptide_to_ord(pep) for pep in peptides]
+        # Convert all peptides to ord() arrays (I→L conversion happens here!)
+        # Display strings keep original I/L, computational arrays treat I=L
+        peptides_ord_list = [encode_peptide_to_ord(pep.replace('I', 'L')) for pep in peptides]
 
         # Create flat storage
         self.peptide_lengths = np.array(
@@ -652,8 +653,8 @@ class TargetDecoyDatabase(PeptideDatabase):
         else:
             proteins = read_fasta(fasta_path, min_length=min_peptide_length)
 
-        # Digest proteins
-        target_peptides, peptide_to_proteins = digest_protein_list(
+        # Digest proteins (now returns protein_db too!)
+        target_peptides, peptide_to_proteins, protein_db = digest_protein_list(
             proteins,
             min_length=min_peptide_length,
             max_length=max_peptide_length,
@@ -663,7 +664,8 @@ class TargetDecoyDatabase(PeptideDatabase):
         # Create database with decoys
         db = cls(target_peptides, decoy_method=decoy_method, **kwargs)
 
-        # Store peptide-to-protein mapping as attribute
-        db.peptide_to_proteins = peptide_to_proteins
+        # Store peptide-to-protein mapping and protein database
+        db.peptide_to_proteins = peptide_to_proteins  # Dict[int, List[str]]
+        db.protein_db = protein_db  # Dict[str, Dict[str, str]]
 
         return db

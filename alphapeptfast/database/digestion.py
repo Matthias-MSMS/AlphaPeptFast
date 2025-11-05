@@ -19,7 +19,7 @@ Performance
 """
 
 import logging
-from typing import List, Tuple
+from typing import List, Tuple, Dict
 from collections import defaultdict
 
 from ..constants import AA_MASSES_DICT
@@ -86,9 +86,7 @@ def digest_protein_trypsin(
 
             # Apply length filter
             if min_length <= len(peptide) <= max_length:
-                # Convert I to L (standard practice in proteomics)
-                peptide = peptide.replace('I', 'L')
-
+                # Keep original I/L (conversion happens during ord() encoding)
                 # Filter non-standard amino acids
                 if all(aa in AA_MASSES_DICT for aa in peptide):
                     peptides.append(peptide)
@@ -101,7 +99,7 @@ def digest_protein_list(
     min_length: int = 7,
     max_length: int = 35,
     missed_cleavages: int = 2,
-) -> Tuple[List[str], dict]:
+) -> Tuple[List[str], Dict[int, List[str]], Dict[str, Dict[str, str]]]:
     """Digest list of proteins and build peptide-to-protein mapping.
 
     Parameters
@@ -119,20 +117,31 @@ def digest_protein_list(
     Returns
     -------
     unique_peptides : List[str]
-        List of unique peptide sequences
-    peptide_to_proteins : dict
-        Dictionary mapping peptide → list of protein IDs
+        List of unique peptide sequences (original I/L preserved)
+    peptide_to_proteins : Dict[int, List[str]]
+        Index-based mapping: peptide_idx → list of protein IDs
+    protein_db : Dict[str, Dict[str, str]]
+        Protein database: protein_id → {"sequence", "description", "gene_name"}
 
     Examples
     --------
     >>> proteins = [("P12345", "PROTEINSEQ", "Description")]
-    >>> peptides, mapping = digest_protein_list(proteins)
+    >>> peptides, mapping, protein_db = digest_protein_list(proteins)
     >>> print(f"{len(peptides)} unique peptides")
+    >>> print(f"{len(protein_db)} proteins")
+
+    Notes
+    -----
+    I/L are kept as-is in peptide sequences. Conversion to L happens only
+    during ord() encoding in PeptideDatabase for computational efficiency.
     """
     logger.info(f"Digesting {len(proteins):,} proteins...")
 
-    # Use defaultdict for efficient peptide-to-proteins mapping
-    peptide_to_proteins = defaultdict(list)
+    # Build protein database (source of truth for sequences)
+    protein_db = {}
+
+    # Temporary sequence-based mapping (will convert to index-based)
+    seq_to_proteins = defaultdict(list)
 
     total_peptides_generated = 0
 
@@ -140,6 +149,20 @@ def digest_protein_list(
         # Skip very short proteins
         if len(sequence) < min_length:
             continue
+
+        # Store protein in database
+        # Extract gene name from description if available (e.g., "GN=PKA1")
+        gene_name = ""
+        if "GN=" in description:
+            gn_start = description.index("GN=") + 3
+            gn_end = description.find(" ", gn_start)
+            gene_name = description[gn_start:gn_end] if gn_end != -1 else description[gn_start:]
+
+        protein_db[protein_id] = {
+            "sequence": sequence,
+            "description": description,
+            "gene_name": gene_name,
+        }
 
         # Digest protein
         peptides = digest_protein_trypsin(
@@ -150,26 +173,31 @@ def digest_protein_list(
             missed_cleavages,
         )
 
-        # Add to mapping (automatically deduplicates across proteins)
+        # Add to sequence-based mapping (automatically deduplicates)
         for peptide in peptides:
-            peptide_to_proteins[peptide].append(protein_id)
+            seq_to_proteins[peptide].append(protein_id)
 
         total_peptides_generated += len(peptides)
 
         # Progress logging
         if (idx + 1) % 5000 == 0:
-            unique_count = len(peptide_to_proteins)
+            unique_count = len(seq_to_proteins)
             logger.info(
                 f"  Processed {idx + 1:,} proteins: "
                 f"{unique_count:,} unique peptides"
             )
 
-    # Convert to regular dict and get unique peptides
-    peptide_to_proteins = dict(peptide_to_proteins)
-    unique_peptides = list(peptide_to_proteins.keys())
+    # Get unique peptides (preserves order)
+    unique_peptides = list(seq_to_proteins.keys())
+
+    # Convert to index-based mapping (Dict for consistency/safety)
+    peptide_to_proteins = {
+        i: seq_to_proteins[peptide]
+        for i, peptide in enumerate(unique_peptides)
+    }
 
     logger.info("\n✓ Digestion complete:")
-    logger.info(f"  Total proteins: {len(proteins):,}")
+    logger.info(f"  Total proteins: {len(protein_db):,}")
     logger.info(f"  Total peptides generated: {total_peptides_generated:,}")
     logger.info(f"  Unique peptides: {len(unique_peptides):,}")
     logger.info(
@@ -184,7 +212,7 @@ def digest_protein_list(
         f"({shared_peptides / len(unique_peptides) * 100:.1f}%)"
     )
 
-    return unique_peptides, peptide_to_proteins
+    return unique_peptides, peptide_to_proteins, protein_db
 
 
 def digest_fasta(
@@ -192,7 +220,7 @@ def digest_fasta(
     min_length: int = 7,
     max_length: int = 35,
     missed_cleavages: int = 2,
-) -> Tuple[List[str], dict]:
+) -> Tuple[List[str], Dict[int, List[str]], Dict[str, Dict[str, str]]]:
     """Convenience function: Read FASTA and digest in one step.
 
     Parameters
@@ -209,13 +237,15 @@ def digest_fasta(
     Returns
     -------
     unique_peptides : List[str]
-        List of unique peptide sequences
-    peptide_to_proteins : dict
-        Dictionary mapping peptide → list of protein IDs
+        List of unique peptide sequences (original I/L preserved)
+    peptide_to_proteins : Dict[int, List[str]]
+        Index-based mapping: peptide_idx → list of protein IDs
+    protein_db : Dict[str, Dict[str, str]]
+        Protein database: protein_id → {"sequence", "description", "gene_name"}
 
     Examples
     --------
-    >>> peptides, mapping = digest_fasta("human.fasta")
+    >>> peptides, mapping, protein_db = digest_fasta("human.fasta")
     >>> print(f"Generated {len(peptides)} unique peptides")
     """
     from .fasta_reader import read_fasta
