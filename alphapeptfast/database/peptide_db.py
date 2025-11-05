@@ -137,7 +137,7 @@ class PeptideDatabase:
         peptides: List[str],
         fixed_modifications: Optional[Dict[str, float]] = None
     ):
-        """Build database with mass index.
+        """Build database with mass index and flat ord() storage.
 
         Parameters
         ----------
@@ -148,14 +148,35 @@ class PeptideDatabase:
             Default includes Carbamidomethyl C (+57.021464)
             Note: Already included in AA_MASSES, specify if different
         """
-        self.peptides = peptides
         self.n_peptides = len(peptides)
 
-        # Calculate neutral masses
-        print(f"Calculating neutral masses for {self.n_peptides:,} peptides...")
+        # Keep display strings for reporting (original sequences)
+        self.peptides_display = peptides
+
+        print(f"Building flat ord() storage for {self.n_peptides:,} peptides...")
+
+        # Convert all peptides to ord() arrays
+        peptides_ord_list = [encode_peptide_to_ord(pep) for pep in peptides]
+
+        # Create flat storage
+        self.peptide_lengths = np.array(
+            [len(p) for p in peptides_ord_list],
+            dtype=np.uint8
+        )
+        self.peptide_starts = np.zeros(self.n_peptides, dtype=np.int32)
+        if self.n_peptides > 0:
+            self.peptide_starts[1:] = self.peptide_lengths[:-1].cumsum()
+
+        total_length = self.peptide_lengths.sum()
+        self.peptides_ord_flat = np.concatenate(peptides_ord_list) if total_length > 0 else np.array([], dtype=np.uint8)
+
+        print(f"✓ Flat storage: {total_length:,} bytes")
+
+        # Calculate neutral masses (use flat storage)
+        print(f"Calculating neutral masses...")
         self.neutral_masses = np.array([
-            calculate_neutral_mass(encode_peptide_to_ord(pep))
-            for pep in peptides
+            calculate_neutral_mass(self.get_peptide_ord(i))
+            for i in range(self.n_peptides)
         ], dtype=np.float64)
 
         # Sort by mass
@@ -228,7 +249,7 @@ class PeptideDatabase:
         return self.search_by_mass(neutral_mass, tol_ppm)
 
     def get_peptide(self, idx: int) -> str:
-        """Get peptide sequence by original index.
+        """Get peptide sequence by original index (for display).
 
         Parameters
         ----------
@@ -238,9 +259,35 @@ class PeptideDatabase:
         Returns
         -------
         peptide : str
-            Peptide sequence
+            Peptide sequence (display string)
         """
-        return self.peptides[idx]
+        return self.peptides_display[idx]
+
+    def get_peptide_ord(self, idx: int) -> np.ndarray:
+        """Get peptide as ord() array (fast access for Numba).
+
+        This method provides fast access to peptide data without string
+        conversion overhead. Use this for all computational operations.
+
+        Parameters
+        ----------
+        idx : int
+            Original peptide index
+
+        Returns
+        -------
+        peptide_ord : np.ndarray (uint8)
+            Peptide as array of ord() values
+
+        Examples
+        --------
+        >>> peptide_ord = db.get_peptide_ord(0)
+        >>> # Use directly in Numba functions
+        >>> fragments = generate_by_ions(peptide_ord, charge=2)
+        """
+        start = self.peptide_starts[idx]
+        length = self.peptide_lengths[idx]
+        return self.peptides_ord_flat[start:start + length]
 
     def get_mass(self, idx: int) -> float:
         """Get neutral mass by original index.
@@ -258,6 +305,41 @@ class PeptideDatabase:
         # Find position in sorted array
         pos = np.searchsorted(self.sort_indices, idx)
         return self.neutral_masses[pos]
+
+    def get_flat_arrays(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Extract flat arrays for Numba functions.
+
+        Returns the flat peptide storage arrays that can be passed directly
+        to Numba-compiled functions. Use this pattern when writing batch
+        processing functions that iterate over many peptides.
+
+        Returns
+        -------
+        peptides_flat : np.ndarray (uint8)
+            Flat concatenated array of all peptides
+        peptide_starts : np.ndarray (int32)
+            Start position of each peptide in flat array
+        peptide_lengths : np.ndarray (uint8)
+            Length of each peptide
+
+        Examples
+        --------
+        >>> # Extract arrays for Numba
+        >>> flat, starts, lengths = db.get_flat_arrays()
+        >>>
+        >>> # Pass to Numba function (not the class!)
+        >>> scores = batch_score_numba(
+        ...     candidate_indices,
+        ...     flat, starts, lengths,  # Arrays, not db!
+        ...     spectrum_mz, spectrum_intensity
+        ... )
+
+        Notes
+        -----
+        Inside Numba function:
+            peptide_ord = peptides_flat[starts[idx]:starts[idx]+lengths[idx]]
+        """
+        return self.peptides_ord_flat, self.peptide_starts, self.peptide_lengths
 
     @classmethod
     def from_list(
