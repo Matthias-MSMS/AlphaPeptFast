@@ -10,6 +10,7 @@ Key Features
 - Parallel processing with Numba for maximum throughput
 - Mass error tracking for quality assessment
 - XIC correlation-based scoring
+- Gaussian smoothing and FWHM calculation
 - >28,000 spectra/second performance
 
 Examples
@@ -31,6 +32,10 @@ Examples
 ...     result.get('mass_sum_matrix'),
 ...     result.get('mass_count_matrix')
 ... )
+>>>
+>>> # Smooth and calculate FWHM
+>>> from alphapeptfast.xic import smooth_and_calculate_fwhm
+>>> fwhm = smooth_and_calculate_fwhm(rt_values, xic_intensities)
 """
 
 from .extraction import (
@@ -43,7 +48,17 @@ from .extraction import (
     UltraFastXICExtractor,
 )
 
+from .smoothing import (
+    smooth_gaussian_1d,
+    auto_smooth_xic,
+    calculate_fwhm,
+    calculate_fwhm_with_apex,
+    calculate_peak_quality,
+    smooth_and_calculate_fwhm,
+)
+
 __all__ = [
+    # Extraction
     "binary_search_mz_range",
     "build_xics_ultrafast",
     "build_xics_with_mass_matrix",
@@ -51,4 +66,11 @@ __all__ = [
     "score_xic_correlation",
     "score_peptide_with_mass_errors",
     "UltraFastXICExtractor",
+    # Smoothing and peak analysis
+    "smooth_gaussian_1d",
+    "auto_smooth_xic",
+    "calculate_fwhm",
+    "calculate_fwhm_with_apex",
+    "calculate_peak_quality",
+    "smooth_and_calculate_fwhm",
 ]
