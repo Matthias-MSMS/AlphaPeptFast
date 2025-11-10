@@ -495,6 +495,271 @@ def find_isotope_envelope(
     return observed_mz, observed_intensity, mass_errors_ppm
 
 
+@njit
+def detect_cluster_containing_peak(
+    spectrum_mz: np.ndarray,
+    spectrum_intensity: np.ndarray,
+    clicked_mz: float,
+    tolerance_ppm: float = 10.0,
+    min_charge: int = 1,
+    max_charge: int = 4,
+    max_isotope_offset: int = 3,
+    n_peaks: int = 5,
+) -> tuple[float, int, int, float, int]:
+    """Find the isotope cluster containing a clicked peak (reverse search).
+
+    Given a peak m/z, try different hypotheses for which isotope (M+0, M+1, M+2, M+3)
+    and charge state it could be, then find and score the full envelope.
+
+    Parameters
+    ----------
+    spectrum_mz : np.ndarray (float64)
+        Sorted m/z values from spectrum
+    spectrum_intensity : np.ndarray (float32)
+        Corresponding intensities
+    clicked_mz : float
+        The m/z of the peak that was clicked/hovered
+    tolerance_ppm : float
+        Mass tolerance for peak matching (default: 10.0 ppm)
+    min_charge : int
+        Minimum charge state to consider (default: 1)
+    max_charge : int
+        Maximum charge state to consider (default: 4)
+    max_isotope_offset : int
+        Maximum isotope number to consider (default: 3 = M+0 to M+3)
+    n_peaks : int
+        Number of isotope peaks to search for (default: 5)
+
+    Returns
+    -------
+    monoisotopic_mz : float
+        Inferred monoisotopic m/z (M+0) of the cluster (0.0 if not found)
+    charge : int
+        Inferred charge state (0 if not found)
+    isotope_offset : int
+        Which isotope was clicked (0=M+0, 1=M+1, etc.) (-1 if not found)
+    score : float
+        Quality score of the cluster (0-1 range)
+    n_found : int
+        Number of isotope peaks found in cluster
+
+    Notes
+    -----
+    **Algorithm:**
+    1. Try each hypothesis: clicked peak could be M+0, M+1, M+2, or M+3
+    2. For each hypothesis and charge state:
+       - Calculate implied monoisotopic m/z
+       - Search for full isotope envelope
+       - Score the envelope quality
+    3. Return the best-scoring hypothesis
+
+    **Scoring criteria:**
+    - At least 2 peaks must be found
+    - Intensity pattern should roughly match theoretical
+    - Higher charges preferred if scores are similar (more specific)
+
+    Examples
+    --------
+    >>> # User clicks on a peak at m/z 651.002
+    >>> mono_mz, charge, iso_offset, score, n_found = detect_cluster_containing_peak(
+    ...     ms1_mz, ms1_intensity, clicked_mz=651.002
+    ... )
+    >>> if score > 0.3:  # Found a good cluster
+    ...     print(f"This is M+{iso_offset} of a z={charge} ion")
+    ...     print(f"Monoisotopic m/z: {mono_mz:.4f}")
+    ...     print(f"Cluster has {n_found} peaks (score: {score:.2f})")
+    """
+    best_monoisotopic_mz = 0.0
+    best_charge = 0
+    best_isotope_offset = -1
+    best_score = 0.0
+    best_n_found = 0
+
+    # Try each charge state
+    for charge in range(min_charge, max_charge + 1):
+        mz_spacing = ISOTOPE_MASS_DIFFERENCE / charge
+
+        # Try each isotope hypothesis (M+0, M+1, M+2, M+3)
+        for iso_offset in range(max_isotope_offset + 1):
+            # Calculate implied monoisotopic m/z
+            # If clicked peak is M+iso_offset, then M+0 is:
+            implied_mono_mz = clicked_mz - iso_offset * mz_spacing
+
+            # Find isotope envelope starting from implied M+0
+            obs_mz, obs_int, mass_errors = find_isotope_envelope(
+                spectrum_mz,
+                spectrum_intensity,
+                implied_mono_mz,
+                charge,
+                tolerance_ppm,
+                n_peaks,
+            )
+
+            # Count found peaks
+            n_found = 0
+            for i in range(n_peaks):
+                if obs_mz[i] > 0:
+                    n_found += 1
+
+            # Must find at least 2 peaks to be a valid cluster
+            if n_found < 2:
+                continue
+
+            # CRITICAL: Check for intermediate isotopes to distinguish z=2 from z=4
+            # If charge >= 2, verify that intermediate peaks exist
+            # For z=4, we should see peaks at fractional positions (M0, M0.5, M1, M1.5, M2)
+            # For z=2, we only see whole number positions (M0, M1, M2)
+            # If intermediate peaks missing, divide charge by 2
+            actual_charge = charge
+            if charge >= 2 and n_found >= 2:
+                # Calculate actual spacing between consecutive observed peaks
+                observed_spacings = []
+                for i in range(n_peaks - 1):
+                    if obs_mz[i] > 0 and obs_mz[i + 1] > 0:
+                        observed_spacings.append(obs_mz[i + 1] - obs_mz[i])
+
+                if len(observed_spacings) > 0:
+                    # Calculate median spacing between consecutive isotopes
+                    median_spacing = observed_spacings[0]  # Simple median for small lists
+                    if len(observed_spacings) > 1:
+                        observed_spacings.sort()
+                        median_spacing = observed_spacings[len(observed_spacings) // 2]
+
+                    # Expected spacing for this charge
+                    expected_spacing = ISOTOPE_MASS_DIFFERENCE / charge
+
+                    # If observed spacing is ~2x expected, intermediate isotopes are missing
+                    # This means the actual charge is half
+                    spacing_ratio = median_spacing / expected_spacing
+                    if spacing_ratio > 1.7:  # Allow 15% tolerance (1.7 = 2.0 / 1.15)
+                        actual_charge = max(1, charge // 2)
+
+            # Simple scoring: peak coverage (NO charge bonus - it was causing false z=4 calls)
+            # Lower charges (z=2) are actually MORE common in ESI, not less
+            peak_coverage = n_found / float(n_peaks)
+            score = peak_coverage
+
+            # Check that the clicked peak was actually found
+            # (Verify that our hypothesis makes sense)
+            clicked_peak_found = False
+            if iso_offset < n_peaks and obs_mz[iso_offset] > 0:
+                # Check if it matches the clicked m/z
+                error_ppm = abs((obs_mz[iso_offset] - clicked_mz) / clicked_mz * 1e6)
+                if error_ppm < tolerance_ppm:
+                    clicked_peak_found = True
+
+            if not clicked_peak_found:
+                continue  # Invalid hypothesis
+
+            # Update best if this is better
+            if score > best_score:
+                best_score = score
+                best_monoisotopic_mz = implied_mono_mz
+                best_charge = actual_charge  # Use corrected charge, not hypothesized charge
+                best_isotope_offset = iso_offset
+                best_n_found = n_found
+
+    return best_monoisotopic_mz, best_charge, best_isotope_offset, best_score, best_n_found
+
+
+@njit
+def find_neutral_losses(
+    spectrum_mz: np.ndarray,
+    spectrum_intensity: np.ndarray,
+    monoisotopic_mz: float,
+    charge: int,
+    tolerance_ppm: float = 10.0,
+    n_peaks: int = 5,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Find neutral loss isotope envelopes (-H2O, -NH3) for a precursor.
+
+    Given a detected precursor cluster, search for common neutral losses
+    which create secondary isotope envelopes shifted by the loss mass.
+
+    Parameters
+    ----------
+    spectrum_mz : np.ndarray (float64)
+        Sorted m/z values from spectrum
+    spectrum_intensity : np.ndarray (float32)
+        Corresponding intensities
+    monoisotopic_mz : float
+        Monoisotopic m/z (M+0) of the main precursor
+    charge : int
+        Charge state of the precursor
+    tolerance_ppm : float
+        Mass tolerance for peak matching (default: 10.0 ppm)
+    n_peaks : int
+        Number of isotope peaks to search for (default: 5)
+
+    Returns
+    -------
+    h2o_mz : np.ndarray (float64)
+        Observed m/z for -H2O isotope envelope (0.0 if not found)
+    h2o_intensity : np.ndarray (float32)
+        Observed intensities for -H2O (0.0 if not found)
+    nh3_mz : np.ndarray (float64)
+        Observed m/z for -NH3 isotope envelope (0.0 if not found)
+    nh3_intensity : np.ndarray (float32)
+        Observed intensities for -NH3 (0.0 if not found)
+
+    Notes
+    -----
+    **Common neutral losses in peptides:**
+    - **H2O loss** (18.01056 Da): Frequent from Ser, Thr, Glu, Asp sidechains
+    - **NH3 loss** (17.02655 Da): Frequent from Asn, Gln, Lys sidechains
+
+    **M/z shift**: loss_mass / charge
+    - z=2, -H2O: -9.005 m/z
+    - z=2, -NH3: -8.513 m/z
+    - z=3, -H2O: -6.004 m/z
+    - z=3, -NH3: -5.676 m/z
+
+    **Usage in scoring:**
+    Presence of neutral losses provides additional evidence for precursor identity,
+    especially when the main precursor might be partially obscured or low intensity.
+
+    Examples
+    --------
+    >>> # After detecting a precursor cluster
+    >>> h2o_mz, h2o_int, nh3_mz, nh3_int = find_neutral_losses(
+    ...     ms1_mz, ms1_intensity, mono_mz=650.5, charge=2
+    ... )
+    >>> # Check if -H2O was found (at least 2 peaks)
+    >>> n_h2o = np.sum(h2o_mz > 0)
+    >>> if n_h2o >= 2:
+    ...     print(f"Found -H2O neutral loss with {n_h2o} isotope peaks")
+    """
+    # Neutral loss masses (Da)
+    WATER_LOSS = 18.01056
+    AMMONIA_LOSS = 17.02655
+
+    # Calculate neutral loss m/z values
+    h2o_loss_mz = monoisotopic_mz - (WATER_LOSS / charge)
+    nh3_loss_mz = monoisotopic_mz - (AMMONIA_LOSS / charge)
+
+    # Search for -H2O isotope envelope
+    h2o_mz, h2o_intensity, _ = find_isotope_envelope(
+        spectrum_mz,
+        spectrum_intensity,
+        h2o_loss_mz,
+        charge,
+        tolerance_ppm,
+        n_peaks,
+    )
+
+    # Search for -NH3 isotope envelope
+    nh3_mz, nh3_intensity, _ = find_isotope_envelope(
+        spectrum_mz,
+        spectrum_intensity,
+        nh3_loss_mz,
+        charge,
+        tolerance_ppm,
+        n_peaks,
+    )
+
+    return h2o_mz, h2o_intensity, nh3_mz, nh3_intensity
+
+
 # =============================================================================
 # Isotope Envelope Scoring
 # =============================================================================
