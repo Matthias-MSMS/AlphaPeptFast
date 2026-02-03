@@ -1,11 +1,22 @@
 """MS1 feature detection and consolidation.
 
 This module provides:
+- Feature finding using intensity-weighted peak grouping (argmax algorithm)
 - Isotope pattern detection with automatic charge state determination
 - Charge state consolidation (grouping z=2, z=3, z=4 of same peptide)
 - Instrument-specific parameter presets (Orbitrap, MR-TOF, Astral)
 - Parameter learning from ground truth data
 """
+
+from .feature_finding import (
+    FeatureFinderParams,
+    FeatureFinder,
+    find_features_numba,
+    find_features_core_anneal,
+    find_isotope_patterns as find_isotope_patterns_simple,
+    find_charge_pairs,
+    C13_MASS_DIFF,
+)
 
 from .isotope_grouping import (
     IsotopeGroup,
@@ -33,6 +44,15 @@ from .quality_scoring import (
 )
 
 __all__ = [
+    # Feature finding (argmax algorithm)
+    'FeatureFinderParams',
+    'FeatureFinder',
+    'find_features_numba',
+    'find_features_core_anneal',
+    'find_isotope_patterns_simple',
+    'find_charge_pairs',
+    'C13_MASS_DIFF',
+
     # Isotope grouping
     'IsotopeGroup',
     'IsotopeGroupingParams',
