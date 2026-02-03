@@ -57,6 +57,14 @@ from .smoothing import (
     smooth_and_calculate_fwhm,
 )
 
+from .centroiding import (
+    CentroidingParams,
+    find_peaks_in_profile,
+    centroid_multiple_spectra,
+    centroid_profile_spectrum,
+    ProfileCentroider,
+)
+
 __all__ = [
     # Extraction
     "binary_search_mz_range",
@@ -73,4 +81,10 @@ __all__ = [
     "calculate_fwhm_with_apex",
     "calculate_peak_quality",
     "smooth_and_calculate_fwhm",
+    # Profile centroiding
+    "CentroidingParams",
+    "find_peaks_in_profile",
+    "centroid_multiple_spectra",
+    "centroid_profile_spectrum",
+    "ProfileCentroider",
 ]
