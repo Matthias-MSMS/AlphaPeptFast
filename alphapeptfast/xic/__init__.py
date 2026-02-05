@@ -65,6 +65,15 @@ from .centroiding import (
     ProfileCentroider,
 )
 
+from .q1_extraction import (
+    Q1KernelParams,
+    binary_search_left,
+    binary_search_right,
+    extract_q1_profile_spec,
+    extract_rt_profile_spec,
+    compute_kernel_correlation,
+)
+
 __all__ = [
     # Extraction
     "binary_search_mz_range",
@@ -87,4 +96,11 @@ __all__ = [
     "centroid_multiple_spectra",
     "centroid_profile_spectrum",
     "ProfileCentroider",
+    # Q1 profile extraction
+    "Q1KernelParams",
+    "binary_search_left",
+    "binary_search_right",
+    "extract_q1_profile_spec",
+    "extract_rt_profile_spec",
+    "compute_kernel_correlation",
 ]
