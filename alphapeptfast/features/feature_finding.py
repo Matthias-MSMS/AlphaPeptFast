@@ -62,16 +62,16 @@ class FeatureFinderParams:
     max_charge : int
         Maximum charge state to detect (default: 4)
     """
-    ppm_tol: float = 15.0
-    rt_tol_sec: float = 3.0
-    intensity_threshold: float = 1000.0
+    ppm_tol: float = 5.0
+    rt_tol_sec: float = 5.0
+    intensity_threshold: float = 500.0
     min_peaks: int = 3
 
     isotope_ppm_tol: float = 10.0
     isotope_rt_tol_sec: float = 5.0
 
     charge_pair_rt_tol_sec: float = 5.0
-    charge_pair_mass_tol_da: float = 0.1
+    charge_pair_mass_tol_ppm: float = 10.0
 
     min_charge: int = 2
     max_charge: int = 4
@@ -209,9 +209,10 @@ def find_features_numba(
 
             w = intensity[i]
             sum_int += w
-            sum_mz_w += mz[i] * w
+            mz_i = np.float64(mz[i])
+            sum_mz_w += mz_i * w
             sum_rt_w += rt[i] * w
-            sum_mz_sq_w += mz[i] * mz[i] * w
+            sum_mz_sq_w += mz_i * mz_i * w
 
             if rt[i] < min_rt:
                 min_rt = rt[i]
@@ -340,9 +341,10 @@ def _collect_peaks_for_feature(
 
         w = intensity[i]
         sum_int += w
-        sum_mz_w += mz[i] * w
+        mz_i = np.float64(mz[i])
+        sum_mz_w += mz_i * w
         sum_rt_w += rt[i] * w
-        sum_mz_sq_w += mz[i] * mz[i] * w
+        sum_mz_sq_w += mz_i * mz_i * w
 
         if rt[i] < min_rt:
             min_rt = rt[i]
@@ -703,7 +705,7 @@ def find_charge_pairs(
     charge: np.ndarray,
     n_features: int,
     rt_tol_sec: float,
-    mass_tol_da: float,
+    mass_tol_ppm: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Find charge pairs (same peptide at z=2 and z=3).
@@ -713,7 +715,7 @@ def find_charge_pairs(
 
     For z=2 features, look for z=3 partner with:
     - RT co-elution
-    - Same neutral mass (within tolerance)
+    - Same neutral mass (within PPM tolerance)
 
     Parameters
     ----------
@@ -729,8 +731,8 @@ def find_charge_pairs(
         Number of features
     rt_tol_sec : float
         RT tolerance for co-elution
-    mass_tol_da : float
-        Neutral mass tolerance in Da
+    mass_tol_ppm : float
+        Neutral mass tolerance in PPM
 
     Returns
     -------
@@ -772,9 +774,12 @@ def find_charge_pairs(
         # Calculate neutral mass from z=2
         z2_neutral_mass = z2_mz * 2 - 2 * PROTON_MASS
 
+        # PPM-based tolerance: convert to Da for this specific mass
+        tol_da = z2_neutral_mass * mass_tol_ppm / 1e6
+
         # Binary search for z=3 candidates with matching neutral mass
-        left = np.searchsorted(z3_mass_sorted, z2_neutral_mass - mass_tol_da)
-        right = np.searchsorted(z3_mass_sorted, z2_neutral_mass + mass_tol_da)
+        left = np.searchsorted(z3_mass_sorted, z2_neutral_mass - tol_da)
+        right = np.searchsorted(z3_mass_sorted, z2_neutral_mass + tol_da)
 
         best_partner_idx = -1
         best_mass_error = 1e10
@@ -946,7 +951,7 @@ class FeatureFinder:
             self.features['charge'],
             self.n_features,
             self.params.charge_pair_rt_tol_sec,
-            self.params.charge_pair_mass_tol_da,
+            self.params.charge_pair_mass_tol_ppm,
         )
 
         # Add to features
