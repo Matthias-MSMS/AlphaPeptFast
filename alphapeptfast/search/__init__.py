@@ -29,6 +29,13 @@ from .candidate_matching import (
     MatchResults,
 )
 
+from .fragment_index import (
+    build_fragment_index,
+    search_spectrum_direct,
+    search_spectrum_complementary,
+    mass_to_bin,
+)
+
 __all__ = [
     # Fragment matching
     'binary_search_mz',
@@ -41,4 +48,9 @@ __all__ = [
     'extract_features',
     'extract_features_extended',
     'MatchResults',
+    # Inverted log-bin fragment index with IDF + complementary lookup
+    'build_fragment_index',
+    'search_spectrum_direct',
+    'search_spectrum_complementary',
+    'mass_to_bin',
 ]

@@ -1,23 +1,30 @@
 """Decoy peptide generation for FDR control.
 
 Multiple decoy generation methods for target-decoy approach:
-- K↔R swap: Reverse + swap K↔R (RECOMMENDED for sub-ppm accuracy)
-- Reverse: Simple reversal
-- Pseudo-reverse: Reverse with C-terminal preservation
+- DIA-NN (default): Reverse middle residues, keep BOTH N- and C-termini intact
+- K↔R swap: Reverse + swap K↔R (for MS1-centric / sub-ppm-accuracy search)
+- Reverse: Simple reversal (legacy)
+- Pseudo-reverse (X!Tandem-style): Reverse keeping only the C-terminal residue
 
-Design principles:
-1. K↔R swap: Creates mass difference (prevents MS1 competition at sub-ppm)
-2. K↔R swap: Preserves tryptic properties (C-terminal K/R → R/K)
-3. All methods produce different fragmentation patterns
-4. Selectable method for different use cases
+DEFAULT IS DIA-NN to match AlphaDIA convention. Use 'kr_swap' for MS1-centric
+search where target and decoy must NOT compete in the same MS1 window.
 
-Key Features
-------------
-- K↔R swap: Superior to shuffling for high-accuracy search
-  - Mass difference: 28.006 Da per K/R imbalance → no MS1 competition
-  - Tryptic preservation: K/R stays at C-terminus (shuffling destroys this)
-  - At sub-ppm accuracy: Target and decoy don't compete in same MS1 window
-- Reverse/pseudo-reverse: Mass preserved (for traditional FDR)
+Design principles
+-----------------
+1. DIA-NN keep-both-termini: Most realistic decoys for tryptic digests — both
+   the N-terminal post-cleavage residue AND C-terminal K/R are preserved, so
+   target and decoy distributions match at both ends. This is what DIA-NN
+   uses (Demichev et al., Nat Methods 2020) and what AlphaDIA adopted.
+2. K↔R swap: Creates ~28 Da mass difference (prevents MS1 competition at
+   sub-ppm). Preserves tryptic C-term (K↔R). Different mass than target,
+   so use only for MS1-anchored / sub-ppm search.
+3. Pseudo-reverse (X!Tandem-style, `seq[-2::-1] + seq[-1]`): Preserves only
+   the C-terminal residue; the N-terminal residue is the target's penultimate
+   residue (typically NOT a tryptic cleavage product). Mass-preserving.
+4. Reverse: Pure `seq[::-1]`. Legacy. Both termini changed.
+
+All methods (except K↔R swap) produce decoys with identical mass to target,
+which is what classical target-decoy FDR assumes.
 """
 
 import logging
@@ -182,9 +189,62 @@ def generate_pseudo_reverse_decoy(peptide: str) -> str:
     return peptide[-2::-1] + peptide[-1]
 
 
+def generate_diann_decoy(peptide: str) -> str:
+    """Generate decoy by reversing middle residues, keeping BOTH termini intact.
+
+    DIA-NN convention (Demichev et al., Nat Methods 2020), also used by
+    AlphaDIA. Preserves:
+    - Amino acid composition
+    - Precursor mass (mass-identical to target)
+    - Tryptic N-terminal (post-cleavage residue at position 0)
+    - Tryptic C-terminal (K/R at position N-1)
+
+    Different fragmentation patterns from target.
+
+    This is the recommended method for traditional MS2-driven target-decoy
+    FDR on tryptic peptides because both termini match the target distribution
+    at the cleavage products — neither is artefactually different.
+
+    Parameters
+    ----------
+    peptide : str
+        Target peptide sequence
+
+    Returns
+    -------
+    decoy : str
+        DIA-NN-style pseudo-reversed peptide sequence
+
+    Examples
+    --------
+    >>> generate_diann_decoy("PEPTIDEK")
+    'PEDITPEK'  # P (N-term) and K (C-term) both preserved; middle reversed
+
+    >>> generate_diann_decoy("ASPECTKR")
+    'ATCEPSKR'  # A and R kept; SPECTK reversed
+
+    >>> generate_diann_decoy("PR")
+    'PR'  # length <= 2, no internal residues to reverse
+
+    Notes
+    -----
+    Compare to X!Tandem reverse-keep-last (`generate_pseudo_reverse_decoy`)
+    which only preserves the C-terminal residue:
+    - Target:               PEPTIDEK
+    - DIA-NN decoy:         PEDITPEK  (both P and K kept)
+    - X!Tandem decoy:       EDITPEPK  (only K kept)
+
+    For peptides of length 1-2, returns unchanged (no internal residues).
+    """
+    if len(peptide) <= 2:
+        return peptide
+
+    return peptide[0] + peptide[1:-1][::-1] + peptide[-1]
+
+
 def generate_decoys(
     target_peptides: List[str],
-    method: str = 'kr_swap',
+    method: str = 'diann',
 ) -> List[str]:
     """Generate decoy peptides from target peptides.
 
@@ -193,10 +253,13 @@ def generate_decoys(
     target_peptides : List[str]
         List of target peptide sequences
     method : str
-        Decoy generation method:
-        - 'kr_swap': Swap K↔R (RECOMMENDED, standard method)
-        - 'reverse': Simple reversal
-        - 'pseudo_reverse': Reverse with C-terminal preservation
+        Decoy generation method (default: 'diann' to match AlphaDIA):
+        - 'diann': Reverse middle, keep both N- and C-termini (DEFAULT,
+          DIA-NN / AlphaDIA convention; mass-preserving)
+        - 'kr_swap': Reverse + swap K↔R (RECOMMENDED for MS1-centric /
+          sub-ppm search; ±28 Da mass difference vs target)
+        - 'reverse': Simple `seq[::-1]` (legacy)
+        - 'pseudo_reverse': X!Tandem reverse-keep-last (only C-term preserved)
 
     Returns
     -------
@@ -206,16 +269,18 @@ def generate_decoys(
     Examples
     --------
     >>> targets = ["PEPTIDEK", "PROTEINK"]
-    >>> decoys = generate_decoys(targets, method='kr_swap')
+    >>> decoys = generate_decoys(targets)  # default = 'diann'
     >>> print(decoys)
-    ['PEPTIDER', 'PROTEINR']
+    ['PEDITPEK', 'PNIETORK']
 
     Raises
     ------
     ValueError
         If method is not recognized
     """
-    if method == 'kr_swap':
+    if method == 'diann':
+        generator = generate_diann_decoy
+    elif method == 'kr_swap':
         generator = generate_kr_swap_decoy
     elif method == 'reverse':
         generator = generate_reverse_decoy
@@ -224,7 +289,7 @@ def generate_decoys(
     else:
         raise ValueError(
             f"Unknown decoy method: {method}. "
-            f"Must be 'kr_swap', 'reverse', or 'pseudo_reverse'"
+            f"Must be 'diann', 'kr_swap', 'reverse', or 'pseudo_reverse'"
         )
 
     logger.info(f"Generating {len(target_peptides):,} decoy peptides (method: {method})...")

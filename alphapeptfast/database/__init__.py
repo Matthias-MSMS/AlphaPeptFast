@@ -41,6 +41,11 @@ from .decoys import (
     generate_decoys,
 )
 
+from .cached_index import (
+    build_or_load_index,
+    TargetDecoyIndex,
+)
+
 __all__ = [
     # Core database classes
     'PeptideDatabase',
@@ -62,4 +67,8 @@ __all__ = [
     'generate_reverse_decoy',
     'generate_pseudo_reverse_decoy',
     'generate_decoys',
+
+    # Cached digest+decoys+index
+    'build_or_load_index',
+    'TargetDecoyIndex',
 ]

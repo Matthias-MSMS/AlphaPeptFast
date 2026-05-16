@@ -43,8 +43,10 @@ from .isotope_scoring import (
     MS1IsotopeScorer,
     calculate_isotope_distribution,
     calculate_isotope_mz_values,
+    detect_cluster_containing_peak,
     detect_fragment_isotopes,
     find_isotope_envelope,
+    find_neutral_losses,
     score_isotope_envelope,
     score_ms2_fragment_isotopes,
 )
@@ -59,6 +61,17 @@ from .peak_grouping import (
     find_coeluting_peaks,
     group_coeluting_peaks,
 )
+from .hyperscore import (
+    log_factorial,
+    match_one_mz,
+    compute_hyperscore,
+)
+from .rf_rescoring import (
+    rf_rescore,
+    lda_rescore,
+    compute_dda_features,
+    compute_target_decoy_qvalues,
+)
 
 __all__ = [
     # FDR calculation
@@ -72,7 +85,9 @@ __all__ = [
     "MS1IsotopeScorer",
     "calculate_isotope_distribution",
     "calculate_isotope_mz_values",
+    "detect_cluster_containing_peak",
     "find_isotope_envelope",
+    "find_neutral_losses",
     "score_isotope_envelope",
     # MS2 fragment isotope detection
     "detect_fragment_isotopes",
@@ -86,4 +101,13 @@ __all__ = [
     "find_coeluting_peaks",
     "group_coeluting_peaks",
     "build_composite_spectrum",
+    # Hyperscore (additive + multiplicative + multi-charge fragments)
+    "log_factorial",
+    "match_one_mz",
+    "compute_hyperscore",
+    # PSM rescoring (RF + Percolator-style LDA with k-fold CV)
+    "rf_rescore",
+    "lda_rescore",
+    "compute_dda_features",
+    "compute_target_decoy_qvalues",
 ]
